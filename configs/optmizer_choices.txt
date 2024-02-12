@@ -1,0 +1,11 @@
+AdaFisher
+AdaFisherW
+AdaHessian
+Adam
+AdamW
+Apollo
+kfac
+ekfac
+SAM
+SGD
+Shampoo

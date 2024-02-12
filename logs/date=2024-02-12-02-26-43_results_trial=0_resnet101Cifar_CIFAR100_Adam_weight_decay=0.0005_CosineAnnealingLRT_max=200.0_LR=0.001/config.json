@@ -1,0 +1,23 @@
+{
+  "dataset": "CIFAR100",
+  "network": "resnet101Cifar",
+  "optimizer": "Adam",
+  "scheduler": "CosineAnnealingLR",
+  "init_lr": 0.001,
+  "early_stop_threshold": -1.0,
+  "optimizer_kwargs": {
+    "weight_decay": 0.0005
+  },
+  "scheduler_kwargs": {
+    "T_max": 200.0
+  },
+  "cutout": false,
+  "n_holes": 1,
+  "cutout_length": 16,
+  "n_trials": 1,
+  "num_workers": 16,
+  "max_epochs": 400,
+  "mini_batch_size": 256,
+  "loss": "cross_entropy",
+  "early_stop_patience": 10
+}

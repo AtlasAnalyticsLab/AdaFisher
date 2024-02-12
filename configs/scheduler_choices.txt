@@ -1,0 +1,4 @@
+None
+StepLR
+OneCycleLR
+CosineAnnealingLR

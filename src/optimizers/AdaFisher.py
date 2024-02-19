@@ -122,19 +122,22 @@ class AdaFisher(optim.Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
+
         for group in self.param_groups:
-            ind_p = 0
-            for m_indx in range(len(self.modules)):
-                m = self.modules[m_indx]
+            idx_p = 0
+            for m_idx in range(len(self.modules)):
+                if group['params'][idx_p] is None:
+                    continue
+                m = self.modules[m_idx]
                 v = self._get_update(m, self.Lambda)
-                if isinstance(v, list):
-                    for v_inx in v:
-                        p = group['params'][ind_p]
-                        self._step(group, p, v_inx)
-                        ind_p += 1
+                if isinstance(v, list): # bias and weight
+                    for wb in v:
+                        p = group['params'][idx_p]
+                        self._step(group, p, wb)
+                        idx_p += 1
                 else:
-                    p = group['params'][ind_p]
+                    p = group['params'][idx_p]
                     self._step(group, p, v)
-                    ind_p += 1
+                    idx_p += 1
         self.steps += 1
         return loss

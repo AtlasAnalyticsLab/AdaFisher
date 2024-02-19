@@ -54,7 +54,7 @@ def smart_string_to_int(
 def parse_config(
         config: Dict[str, Union[str, float, int]]) -> Dict[
     str, Union[str, float, int]]:
-    valid_dataset = ['CIFAR10', 'CIFAR100', 'ImageNet', 'TinyImageNet', 'MHIST']
+    valid_dataset = ['CIFAR10', 'CIFAR100', 'ImageNet', 'TinyImageNet']
     if config['dataset'] not in valid_dataset:
         raise ValueError(
             f"config.yaml: unknown dataset {config['dataset']}. " +

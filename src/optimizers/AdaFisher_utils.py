@@ -73,9 +73,10 @@ class Compute_A_Matrix:
     @staticmethod
     def batchnorm2d(a, layer):
         batch_size = a.size(0)
+        spatial_size = a.size(2) * a.size(3)
         sum_a = torch.sum(a, dim=(0, 2, 3)).unsqueeze(1)
         sum_a = torch.cat([sum_a, sum_a.new(sum_a.size(0), 1).fill_(1)], 1)
-        return torch.einsum('ij,ij->j', sum_a, sum_a) / batch_size
+        return torch.einsum('ij,ij->j', sum_a, sum_a) / (batch_size * batch_size)
 
 
 class Compute_G_Matrix:
@@ -87,7 +88,6 @@ class Compute_G_Matrix:
         :param layer: the corresponding layer
         :return:
         """
-        # batch_size = g.size(0)
         return cls.__call__(g, layer)
 
     @classmethod

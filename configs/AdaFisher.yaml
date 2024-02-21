@@ -1,7 +1,7 @@
 ###### Application Specific ######
 dataset: 'CIFAR10' # options: CIFAR100, CIFAR10, ImageNet, TinyImageNet
-network: 's_ViT' # options: see model_choices.txt
-optimizer: 'AdaFisherW' # or AdaFisherW
+network: 'deepvit' # options: see model_choices.txt
+optimizer: 'AdaFisher' # or AdaFisherW
 scheduler: 'CosineAnnealingLR' # options: see scheduler_choices.txt
 
 
@@ -12,7 +12,7 @@ early_stop_threshold: -1 #  set to -1 if you wish not to use early stop,
 optimizer_kwargs:  # named-kwargs to pass to optimizer.
   weight_decay: 5e-4
   beta3: 0.91
-  Lambda: 0.003
+  Lambda: 0.001
   TCov: 10
 scheduler_kwargs: # named-kwargs to pass to scheduler.
   T_max: 200

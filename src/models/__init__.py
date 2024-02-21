@@ -8,9 +8,9 @@ from models.densenet_cifar import (DenseNet121 as densenet121_cifar, DenseNet161
 from models.efficientnet_cifar import efficientnet_B0 as efficientnet_B0_cifar
 from models.vit import s_ViT
 from models.simple_convnet import simple_convnet as simple_convnet_cifar
-from models.cait import cait
 from models.swin import (swin_t, swin_s, swin_b, swin_l)
-
+from models.deepvit import deepvit
+from models.cct import cct
 
 def get_network(name: str, num_classes: int, **kwargs) -> None:
     return \
@@ -63,8 +63,6 @@ def get_network(name: str, num_classes: int, **kwargs) -> None:
             num_classes=num_classes) if name == 'efficientnet_B0Cifar' else\
         s_ViT(
             num_classes=num_classes, **kwargs) if name == 's_ViT' else \
-        cait(
-            num_classes=num_classes, **kwargs) if name == 'cait' else \
         swin_t(
             num_classes=num_classes, **kwargs) if name == 'swin_t' else\
         swin_s(
@@ -72,5 +70,9 @@ def get_network(name: str, num_classes: int, **kwargs) -> None:
         swin_b(
             num_classes=num_classes, **kwargs) if name == 'swin_b' else\
         swin_l(
-            num_classes=num_classes, **kwargs) if name == 'swin_l' else\
+            num_classes=num_classes, **kwargs) if name == 'swin_l' else \
+        deepvit(
+            num_classes=num_classes, **kwargs) if name == 'deepvit' else \
+        cct(
+            num_classes=num_classes, **kwargs) if name == 'cct' else \
         None

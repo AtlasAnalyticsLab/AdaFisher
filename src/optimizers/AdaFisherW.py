@@ -74,11 +74,28 @@ class AdaFisherW(optim.Optimizer):
         v = self.cov_g[m].unsqueeze(1) * self.cov_a_bar[m].unsqueeze(0) + Lambda
         if m.bias is not None:
             v = [v[:, :-1], v[:, -1:]]
-            v[0].reshape(m.weight.grad.data.size()); v[1].reshape(m.bias.grad.data.size())
-            v[0].squeeze_(1); v[1].squeeze_(1)
+            v[0].reshape(m.weight.grad.data.size());
+            v[1].reshape(m.bias.grad.data.size())
+            v[0].squeeze_(1);
+            v[1].squeeze_(1)
             return v
         else:
             return v.reshape(m.weight.grad.data.size())
+
+    def _check_dim(self, param, idx_module, idx_param) -> bool:
+        params = param[idx_param]
+        module_weight = self.modules[idx_module].weight
+        module_bias = self.modules[idx_module].bias
+        if module_bias is not None:
+            if params.data.size() != module_weight.data.size() and params.data.size() != module_bias.data.size():
+                return False
+            else:
+                return True
+        else:
+            if params.data.size() != module_weight.data.size():
+                return False
+            else:
+                return True
 
     @torch.no_grad()
     def _step(self, group, p, j):
@@ -104,12 +121,7 @@ class AdaFisherW(optim.Optimizer):
         k = group['kappa']
         denom = ((exp_avg_Fisher.sqrt() ** k) /
                  math.sqrt(bias_correction2) ** k).add_(group['eps'])
-        if group['weight_decay'] != 0 and self.steps >= 20 * self.TCov: # TODO: check this if
-            p.data = p.data - \
-                     group['lr'] * (exp_avg / bias_correction1 / denom + group['weight_decay'] * p.data)
-        else:
-            p.data = p.data - \
-                     group['lr'] * (exp_avg / bias_correction1 / denom + group['weight_decay'] * p.data)
+        p.data = p.data - group['lr'] * (exp_avg / bias_correction1 / denom + group['weight_decay'] * p.data)
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -123,23 +135,32 @@ class AdaFisherW(optim.Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
-
         for group in self.param_groups:
-            idx_p = 0
-            for m_idx in range(len(self.modules)):
-                if group['params'][idx_p] is None:
+            idx_param, idx_module, buffer_count = 0, 0, 0
+            param = group['params']
+            for i in range(len(self.modules)):
+                if param[idx_param].grad is None:
+                    idx_param += 1
+                    if param[idx_param].ndim > 1:
+                        idx_module += 1
+                    else:
+                        buffer_count += 1
+                    if buffer_count == 2:
+                        idx_module += 1
+                        buffer_count = 0
                     continue
-                m = self.modules[m_idx]
-                v = self._get_update(m, self.Lambda)
-                if isinstance(v, list):  # bias and weight
-                    for wb in v:
-                        p = group['params'][idx_p]
-                        self._step(group, p, wb)
-                        idx_p += 1
+                m = self.modules[idx_module]
+                if self._check_dim(param, idx_module, idx_param):
+                    update = self._get_update(m, self.Lambda)
+                    idx_module += 1
                 else:
-                    p = group['params'][idx_p]
-                    self._step(group, p, v)
-                    idx_p += 1
+                    update = param[idx_param].grad
+                if isinstance(update, list):
+                    for u in update:
+                        self._step(group, param[idx_param], u)
+                        idx_param += 1
+                else:
+                    self._step(group, param[idx_param], update)
+                    idx_param += 1
         self.steps += 1
         return loss
-

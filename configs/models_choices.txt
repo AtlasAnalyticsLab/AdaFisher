@@ -28,3 +28,4 @@ swin_t
 swin_s
 swin_b
 swin_l
+deepvit

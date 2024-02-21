@@ -46,6 +46,8 @@ class Compute_A_Matrix:
             cov_a = cls.conv2d(a, layer)
         elif isinstance(layer, nn.BatchNorm2d):
             cov_a = cls.batchnorm2d(a, layer)
+        elif isinstance(layer, nn.LayerNorm):
+            cov_a = cls.layernorm(a, layer)
         else:
             raise NotImplementedError
 
@@ -61,10 +63,10 @@ class Compute_A_Matrix:
             a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
         return torch.einsum('ij,ij->j', a, a) / (spatial_size * batch_size)
 
-
+    @staticmethod
     def linear(a, layer):
         if len(a.shape) > 2:
-             a = a.reshape(-1, a.shape[-1])
+            a = a.reshape(-1, a.shape[-1])
         batch_size = a.size(0)
         if layer.bias is not None:
             a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
@@ -76,7 +78,19 @@ class Compute_A_Matrix:
         spatial_size = a.size(2) * a.size(3)
         sum_a = torch.sum(a, dim=(0, 2, 3)).unsqueeze(1)
         sum_a = torch.cat([sum_a, sum_a.new(sum_a.size(0), 1).fill_(1)], 1)
-        return torch.einsum('ij,ij->j', sum_a, sum_a) / (batch_size * batch_size)
+        return torch.einsum('ij,ij->j', sum_a, sum_a) / (batch_size * spatial_size)
+
+    @staticmethod
+    def layernorm(a, layer):
+        batch_size = a.size(0)
+        if a.ndim == 2:
+            sum_a = torch.sum(a, dim=0).unsqueeze(1)
+        elif a.ndim == 3:
+            sum_a = torch.sum(a, dim=(0, 2)).unsqueeze(1)
+        elif a.ndim == 4:
+            sum_a = torch.sum(a, dim=(0, 2, 3)).unsqueeze(1)
+        sum_a = torch.cat([sum_a, sum_a.new(sum_a.size(0), 1).fill_(1)], 1)
+        return torch.einsum('ij,ij->j', sum_a, sum_a) / batch_size
 
 
 class Compute_G_Matrix:
@@ -88,6 +102,7 @@ class Compute_G_Matrix:
         :param layer: the corresponding layer
         :return:
         """
+        # batch_size = g.size(0)
         return cls.__call__(g, layer)
 
     @classmethod
@@ -98,9 +113,10 @@ class Compute_G_Matrix:
             cov_g = cls.linear(g, layer)
         elif isinstance(layer, nn.BatchNorm2d):
             cov_g = cls.batchnorm2d(g, layer)
+        elif isinstance(layer, nn.LayerNorm):
+            cov_g = cls.layernorm(g, layer)
         else:
-            cov_g = None
-
+            raise NotImplementedError
         return cov_g
 
     @staticmethod
@@ -127,3 +143,14 @@ class Compute_G_Matrix:
         spatial_dim = g.size(2) * g.size(3)
         sum_g = torch.sum(g, dim=(0, 2, 3))
         return torch.einsum('i,i->i', sum_g, sum_g) / (batch_size * spatial_dim)
+
+    @staticmethod
+    def layernorm(g, layer):
+        batch_size = g.size(0)
+        if g.ndim == 2:
+            sum_g = torch.sum(g, dim=1)
+        elif g.ndim == 3:
+            sum_g = torch.sum(g, dim=(0, 1))
+        elif g.ndim == 4:
+            sum_g = torch.sum(g, dim=(0, 1, 2))
+        return torch.einsum('i,i->i', sum_g, sum_g) / batch_size

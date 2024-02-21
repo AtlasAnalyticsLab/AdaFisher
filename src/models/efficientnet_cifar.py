@@ -1,3 +1,9 @@
+'''EfficientNet in PyTorch.
+
+Paper: "EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks".
+
+Reference: https://github.com/keras-team/keras-applications/blob/master/keras_applications/efficientnet.py
+'''
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -67,7 +73,6 @@ class Block(nn.Module):
                                kernel_size=kernel_size,
                                stride=stride,
                                padding=(1 if kernel_size == 3 else 2),
-                               groups=channels,
                                bias=False)
         self.bn2 = nn.BatchNorm2d(channels)
 

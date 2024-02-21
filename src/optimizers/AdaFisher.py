@@ -11,9 +11,15 @@ __all__ = ['AdaFisher']
 
 
 class AdaFisher(optim.Optimizer):
-    def __init__(self, model, lr: float = 1e-3, betas: tuple = (0.9, 0.999),
-                 Lambda: float = 1e-3, beta3=0.95, eps: float = 1e-8,
-                 TCov: int = 10, weight_decay: float = 0, kappa: float = 0.5):
+    def __init__(self, model: torch.nn.Module,
+                 lr: float = 1e-3,
+                 betas: tuple = (0.9, 0.999),
+                 Lambda: float = 1e-3,
+                 beta3=0.95,
+                 eps: float = 1e-8,
+                 TCov: int = 10,
+                 weight_decay: float = 0,
+                 kappa: float = 0.5):
         if not 0.0 <= lr:
             raise ValueError(f"Invalid learning rate: {lr}")
         if not 0.0 <= eps:
@@ -24,8 +30,8 @@ class AdaFisher(optim.Optimizer):
             raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
         if not 0.0 <= beta3 < 1.0:
             raise ValueError(f"Invalid beta3 parameter: {beta3}")
-        if not 0.0 <= kappa <= 1.0:
-            raise ValueError("Invalid Fisher power value: {}".format(kappa))
+        if not TCov > 0:
+            raise ValueError(f"Invalid TCov parameter: {TCov}")
         defaults = dict(lr=lr, betas=betas, eps=eps,
                         weight_decay=weight_decay, kappa=kappa)
 
@@ -33,7 +39,7 @@ class AdaFisher(optim.Optimizer):
         self.Lambda = Lambda
         self.model = model
         self.TCov = TCov
-        self.known_layers = ("Linear", "Conv2d", "BatchNorm2d")
+        self.known_layers = ("Linear", "Conv2d", "BatchNorm2d", "LayerNorm")
         self.steps = 0
 
         self.cov_a_bar, self.cov_g = {}, {}  # here we want to save in a dictionary the covariance activation and
@@ -54,10 +60,11 @@ class AdaFisher(optim.Optimizer):
 
     def _save_grad_output(self, module, grad_input, grad_output):  # the aim of this function is to save the gradient
         # of the pre-activation function
-        cov_g = self.Cov_GMatrix(grad_output[0].data, module)  # the grad_input corresponds to the gradient of the
+          # the grad_input corresponds to the gradient of the
         # pre-activation function for this layer. Initialize buffers                                   # the
         # grad_output corresponds to the gradient of the activation function for this layer.
         if self.steps % self.TCov == 0:
+            cov_g = self.Cov_GMatrix(grad_output[0].data, module)
             if self.steps == 0:
                 self.cov_g[module] = cov_g.new(cov_g.size(0)).fill_(1)
             update_running_avg(cov_g, self.cov_g[module], self.beta3)
@@ -71,11 +78,13 @@ class AdaFisher(optim.Optimizer):
                 module.register_full_backward_hook(self._save_grad_output)
 
     def _get_update(self, m, Lambda):
-        v = self.cov_g[m].unsqueeze(1) * self.cov_a_bar[m].unsqueeze(0) + Lambda
+        v = self.cov_g[m].unsqueeze(1) * self.cov_a_bar[m].unsqueeze(0) + Lambda # Fisher Computation
         if m.bias is not None:
             v = [v[:, :-1], v[:, -1:]]
-            v[0].reshape(m.weight.grad.data.size()); v[1].reshape(m.bias.grad.data.size())
+            v[0].view(*m.weight.grad.data.size()); v[1].view(*m.bias.grad.data.size())
             v[0].squeeze_(1); v[1].squeeze_(1)
+            if m.weight.grad.data.ndim != v[0].ndim:
+                v[0].unsqueeze_(-1).unsqueeze_(-1)
             return v
         else:
             return v.reshape(m.weight.grad.data.size())
@@ -110,6 +119,21 @@ class AdaFisher(optim.Optimizer):
         step_size = group['lr'] / bias_correction1
         p.addcdiv_(exp_avg, denom, value=-step_size)
 
+    def _check_dim(self, param, idx_module, idx_param) -> bool:
+        params = param[idx_param]
+        module_weight = self.modules[idx_module].weight
+        module_bias = self.modules[idx_module].bias
+        if module_bias is not None:
+            if params.data.size() != module_weight.data.size() and params.data.size() != module_bias.data.size():
+                return False
+            else:
+                return True
+        else:
+            if params.data.size() != module_weight.data.size():
+                return False
+            else:
+                return True
+
     @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -122,22 +146,32 @@ class AdaFisher(optim.Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
-
         for group in self.param_groups:
-            idx_p = 0
-            for m_idx in range(len(self.modules)):
-                if group['params'][idx_p] is None:
+            idx_param, idx_module, buffer_count = 0, 0, 0
+            param = group['params']
+            for i in range(len(self.modules)):
+                if param[idx_param].grad is None:
+                    idx_param += 1
+                    if param[idx_param].ndim > 1:
+                        idx_module += 1
+                    else:
+                        buffer_count += 1
+                    if buffer_count == 2:
+                        idx_module += 1
+                        buffer_count = 0
                     continue
-                m = self.modules[m_idx]
-                v = self._get_update(m, self.Lambda)
-                if isinstance(v, list): # bias and weight
-                    for wb in v:
-                        p = group['params'][idx_p]
-                        self._step(group, p, wb)
-                        idx_p += 1
+                m = self.modules[idx_module]
+                if self._check_dim(param, idx_module, idx_param):
+                    update = self._get_update(m, self.Lambda)
+                    idx_module += 1
                 else:
-                    p = group['params'][idx_p]
-                    self._step(group, p, v)
-                    idx_p += 1
+                    update = param[idx_param].grad
+                if isinstance(update, list):
+                    for u in update:
+                        self._step(group, param[idx_param], u)
+                        idx_param += 1
+                else:
+                    self._step(group, param[idx_param], update)
+                    idx_param += 1
         self.steps += 1
         return loss

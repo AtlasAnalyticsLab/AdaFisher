@@ -1,6 +1,6 @@
 ###### Application Specific ######
 dataset: 'CIFAR10' # options: CIFAR100, CIFAR10, ImageNet, TinyImageNet
-network: 's_ViT' # options: see model_choices.txt
+network: 'deepvit' # options: see model_choices.txt
 optimizer: 'Adam' # or AdamW
 scheduler: 'CosineAnnealingLR' # options: see scheduler_choices.txt
 

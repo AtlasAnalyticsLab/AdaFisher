@@ -42,19 +42,7 @@ def process_WCT(time_results):
     return time_results
 
 
-def get_network(k:str):
-    if k.split("_")[3][-1] != "r":
-        return  k.split("_")[3]
-    else:
-        network = ""
-        for i in k.split("_")[3]:
-            if i == 'C':
-                return network
-            else:
-                network += i
-
-
-def get_info(results, type: str = "top1"):
+def get_best_accuracy(results, type: str = "top1"):
     for k in results.keys():
         if type == "top1":
             train_accuracy, test_accuracy = results[k]["train_accuracy1"], results[k]["test_accuracy1"]
@@ -62,10 +50,9 @@ def get_info(results, type: str = "top1"):
             train_accuracy, test_accuracy = results[k]["train_accuracy5"], results[k]["test_accuracy5"]
         else:
             raise ValueError("Unrecognized type {}".format(type))
-        memory = results[k]["memory_used"]
         optimizer = k.split("_")[5]
         print(f"Optimizer: {optimizer} | The best accuracy is obtained at epoch {test_accuracy.index(max(test_accuracy))} "
-              f"with {round(max(test_accuracy) * 100, 2)} % | Average DRAM used: {max(memory)} %")
+              f"with {round(max(test_accuracy) * 100, 2)} %")
 
 
 def define_color(k):
@@ -122,7 +109,7 @@ def plot_curves_diff(results, loc, dataset: list, type: str = "top1"):
             ax3.plot(train_loss, '-', color=c, label="{} Training".format(optimizer))
             ax4.plot(test_accuracy, '-', color=c, label="{} Testing".format(optimizer))
 
-    network = get_network(k)
+    network = k.split("_")[3] if k.split("_")[3][-1] != "r" else k.split("_")[3][:8]
     ax1.set_title(f"Training: {network.capitalize()} on {dataset[0]}")
     ax2.set_title(f"Testing:  {network.capitalize()} on {dataset[0]}")
     ax3.set_title(f"Training:  {network.capitalize()} on {dataset[1]}")
@@ -175,7 +162,7 @@ def plot_curves_together(results, loc, dataset: list, type: str = "top1"):
         ax1.plot(train_loss, '-', color=c, label="{} Training".format(optimizer))
         ax2.plot(test_accuracy, '-', color=c, label="{} Testing".format(optimizer))
 
-    network = get_network(k)
+    network = k.split("_")[3] if k.split("_")[3][-1] != "r" else k.split("_")[3][:8]
     ax1.set_title(f"Training: {network.capitalize()} on {dataset[0]}")
     ax2.set_title(f"Testing: {network.capitalize()} on {dataset[0]}")
     ax1.set_xlabel("Epochs")
@@ -206,13 +193,12 @@ def plot_WCT_together(results, loc, dataset: list, type: str = "top1"):
         c = define_color(optimizer)
         plt.plot(tot_time, test_accuracy, '-', color=c, label="{} Testing".format(optimizer))
 
-    network = get_network(k)
+    network = k.split("_")[3] if k.split("_")[3][-1] != "r" else k.split("_")[3][:8]
 
     plt.title(f"Testing: {network.capitalize()} on {dataset[0]}")
     plt.xlabel("Time (s)")
     plt.ylabel("Accuracy")
-    #plt.ylim(0.8, 0.95)
-    plt.grid()
+    # plt.ylim(0.25, 0.55)
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"results/{loc}/testaccuracyWCT_{dataset[0]}_{network.capitalize()}")
@@ -226,7 +212,7 @@ def main(models_to_plot: list, loc: str, dataset: list, type: str) -> None:
         if f in models_to_plot:
             results[f] = get_data(f)
 
-    get_info(results)
+    get_best_accuracy(results)
     # If you have same network for all experiments but on two different datasets
     # plot_curves_diff(results = results,
     #                  loc = loc, # loc on the results folder
@@ -243,9 +229,11 @@ def main(models_to_plot: list, loc: str, dataset: list, type: str) -> None:
 
 
 if __name__ == "__main__":
-    models_to_plot = ["date=2024-02-11-18-04-42_results_trial=0_resnet101Cifar_CIFAR100_AdaFisher_weight_decay=0.0005_beta3=0.91_Lambda=0.001_TCov=10.0_CosineAnnealingLRT_max=200.0_LR=0.01",
-                      "date=2024-02-12-02-26-43_results_trial=0_resnet101Cifar_CIFAR100_Adam_weight_decay=0.0005_CosineAnnealingLRT_max=200.0_LR=0.001"]
-    loc = "Resnet101"
-    dataset = ["CIFAR100"]
+    models_to_plot = ["date=2024-02-08_results_trial=0_resnet18Cifar_CIFAR10_kfac_weight_decay=0.0005_momentum=0.9_stat_decay=0.95_damping=0.003_kl_clip=0.001_TCov=10.0_TInv=100.0_batch_averaged=1.0_CosineAnnealingLRT_max=200.0_LR=0.001",
+                      "date=2024-02-08_results_trial=0_resnet18Cifar_CIFAR10_Adam_weight_decay=0.0005_CosineAnnealingLRT_max=200.0_LR=0.001",
+                      "date=2024-02-08_results_trial=0_resnet18Cifar_CIFAR10_AdaFisher_weight_decay=0.0005_beta3=0.91_Lambda=0.003_TCov=10.0_CosineAnnealingLRT_max=200.0_LR=0.01",
+                      "date=2024-02-08_results_trial=0_resnet18Cifar_CIFAR10_AdaFisherW_weight_decay=0.0005_beta3=0.91_Lambda=0.003_CosineAnnealingLRT_max=200.0_LR=0.01"]
+    loc = "Resnet18"
+    dataset = ["CIFAR10"]
     type = "top1"
     main(models_to_plot = models_to_plot, loc = loc, dataset=dataset, type=type)

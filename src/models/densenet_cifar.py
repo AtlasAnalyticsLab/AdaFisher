@@ -15,7 +15,7 @@ class Bottleneck(nn.Module):
         self.bn2 = nn.BatchNorm2d(4*growth_rate)
         self.conv2 = nn.Conv2d(4*growth_rate, growth_rate,
                                kernel_size=3, padding=1, bias=False)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         out = self.conv1(self.relu(self.bn1(x)))
@@ -29,7 +29,7 @@ class Transition(nn.Module):
         super(Transition, self).__init__()
         self.bn = nn.BatchNorm2d(in_planes)
         self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=1, bias=False)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
         self.avgpool = nn.AvgPool2d(2)
 
     def forward(self, x):
@@ -70,7 +70,7 @@ class DenseNet(nn.Module):
 
         self.bn = nn.BatchNorm2d(num_planes)
         self.linear = nn.Linear(num_planes, num_classes)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
         self.avgpool = nn.AvgPool2d(4)
 
     def _make_dense_layers(self, block, in_planes, nblock):

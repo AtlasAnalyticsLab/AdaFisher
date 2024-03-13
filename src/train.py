@@ -26,7 +26,6 @@ from models import get_network
 from utils.utils import parse_config
 from utils.data import get_data
 
-
 def args(sub_parser: _SubParsersAction):
     sub_parser.add_argument(
         '--config', dest='config',
@@ -55,7 +54,6 @@ def args(sub_parser: _SubParsersAction):
     sub_parser.add_argument(
         '--save-freq', default=25, type=int,
         help='Checkpoint epoch save frequency: Default = 25')
-    # sub_parser.set_defaults(resume=False)
     sub_parser.add_argument(
         '--cpu', action='store_true',
         dest='cpu',
@@ -72,6 +70,10 @@ def args(sub_parser: _SubParsersAction):
         'fastest way to use PyTorch for either single node or '
         'multi node data parallel training: Default = False')
     sub_parser.set_defaults(mpd=False)
+    sub_parser.add_argument(
+        '--distributed', type=bool,
+        default=False,
+        help="Use distributed training: Default = False")
     sub_parser.add_argument(
         '--dist-url', default='tcp://127.0.0.1:23456', type=str,
         help="url used to set up distributed training:" +
@@ -173,7 +175,7 @@ class TrainingAgent:
         self.early_stop = EarlyStop(
             patience=int(config['early_stop_patience']),
             threshold=float(config['early_stop_threshold']))
-        # cudnn.benchmark = True # This command is time consuming for the first epochs
+        cudnn.benchmark = True # This command is time consuming for the first epochs
         if self.resume is not None:
             if self.gpu is None:
                 self.checkpoint = torch.load(str(self.resume))
@@ -401,7 +403,6 @@ class TrainingAgent:
                 else:
                     loss.backward()
                 self.optimizer.step()
-
             train_loss += loss.item()
             acc1, acc5 = accuracy(
                 outputs, targets, (1, min(self.num_classes, 5)),
@@ -493,7 +494,6 @@ def setup_dirs(args: APNamespace) -> Tuple[Path, Path, Path, Path]:
     data_path = root_path / Path(args.data).expanduser()
     output_path = root_path / Path(args.output).expanduser()
     checkpoint_path = root_path / Path(args.checkpoint).expanduser()
-
     if not config_path.exists():
         raise ValueError(f"Info: Config path {config_path} does not exist")
     if not data_path.exists():

@@ -23,7 +23,6 @@ wide_resnet50
 wide_resnet101
 efficientnet_B0Cifar
 s_ViT
-cait
 swin_t
 swin_s
 swin_b

@@ -363,17 +363,17 @@ class CCT(nn.Module):
 def cct(num_classes: int):
     net = CCT(
         img_size=(32, 32),
-        embedding_dim=384,
+        embedding_dim=256,
         n_conv_layers=2,
-        kernel_size=7,
+        kernel_size=3,
         stride=2,
         padding=3,
         pooling_kernel_size=3,
         pooling_stride=2,
         pooling_padding=1,
-        num_layers=14,
-        num_heads=6,
-        mlp_ratio=3.,
+        num_layers=7,
+        num_heads=4,
+        mlp_ratio=2.,
         num_classes=num_classes,
         positional_embedding='learnable',  # ['sine', 'learnable', 'none']
     )

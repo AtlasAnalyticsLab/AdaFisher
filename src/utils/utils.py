@@ -98,9 +98,6 @@ def parse_config(
     config['mini_batch_size'] = smart_string_to_int(
         config['mini_batch_size'],
         e='config.yaml: mini_batch_size must be an int')
-    # config['p'] = smart_string_to_int(
-    #     config['p'],
-    #     e='config.yaml: p must be an int')
     config['num_workers'] = smart_string_to_int(
         config['num_workers'],
         e='config.yaml: num_works must be an int')

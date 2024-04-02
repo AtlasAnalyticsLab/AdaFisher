@@ -1,7 +1,7 @@
 import os
 import json
 from matplotlib import pyplot as plt
-
+import numpy as np
 
 def get_data(name_file):
     path = "logs/" + name_file
@@ -20,26 +20,45 @@ def get_data(name_file):
     with open(os.path.join(path, "tot_time.txt"), 'r') as f:
         tot_time_s = [float(number.strip()) for number in f.readlines()]
         tot_time = process_WCT(tot_time_s)
-    with open(os.path.join(path, "mem_used.txt"), 'r') as f:
-        memory_used = []
-        text = f.readlines()
-        for l in text:
-            if l == '/n':
-                continue
-            else:
-                memory_used.append(float(l.split(":")[3]))
+    # with open(os.path.join(path, "mem_used.txt"), 'r') as f:
+    #     memory_used = []
+    #     text = f.readlines()
+    #     for l in text:
+    #         if l == '/n':
+    #             continue
+    #         else:
+    #             memory_used.append(float(l.split(":")[3]))
     with open(os.path.join(path, "config.json"), 'r') as f:
         logs = json.load(f)
 
     return {"logs": logs, "train_accuracy1": train_accuracy1, "train_accuracy5": train_accuracy5,
             "test_accuracy1": test_accuracy1, "test_accuracy5": test_accuracy5, "tot_time": tot_time,
-            "train_loss": train_loss, "valid_loss": valid_loss, "memory_used": memory_used}
+            "train_loss": train_loss, "valid_loss": valid_loss}
 
 
 def process_WCT(time_results):
     for i in range(1, len(time_results)):
         time_results[i] += time_results[i - 1]
     return time_results
+
+
+def get_mean_std(results):
+    list_best_accuracy = []
+    for k in results.keys():
+        test_accuracy =  results[k]["test_accuracy1"]
+        list_best_accuracy.append(max(test_accuracy))
+
+    mean_value = np.mean(list_best_accuracy)
+    std_value = np.std(list_best_accuracy)
+    print(f"Mean accuracy: {round(mean_value * 100, 3)}, std accuracy: {round(std_value * 100, 3)}")
+
+def get_network(k) -> str:
+    if k.split("_")[3][-1] != "r":
+        return k.split("_")[3]
+    elif k.split("_")[3][8:9].isdigit():
+        return k.split("_")[3][:9]
+    else:
+        return k.split("_")[3][:8]
 
 
 def get_best_accuracy(results, type: str = "top1"):
@@ -51,8 +70,9 @@ def get_best_accuracy(results, type: str = "top1"):
         else:
             raise ValueError("Unrecognized type {}".format(type))
         optimizer = k.split("_")[5]
-        print(f"Optimizer: {optimizer} | The best accuracy is obtained at epoch {test_accuracy.index(max(test_accuracy))} "
-              f"with {round(max(test_accuracy) * 100, 2)} %")
+        print(
+            f"Optimizer: {optimizer} | The best accuracy is obtained at epoch {test_accuracy.index(max(test_accuracy))} "
+            f"with {round(max(test_accuracy) * 100, 2)} %")
 
 
 def define_color(k):
@@ -162,7 +182,7 @@ def plot_curves_together(results, loc, dataset: list, type: str = "top1"):
         ax1.plot(train_loss, '-', color=c, label="{} Training".format(optimizer))
         ax2.plot(test_accuracy, '-', color=c, label="{} Testing".format(optimizer))
 
-    network = k.split("_")[3] if k.split("_")[3][-1] != "r" else k.split("_")[3][:8]
+    network = get_network(k)
     ax1.set_title(f"Training: {network.capitalize()} on {dataset[0]}")
     ax2.set_title(f"Testing: {network.capitalize()} on {dataset[0]}")
     ax1.set_xlabel("Epochs")
@@ -193,12 +213,13 @@ def plot_WCT_together(results, loc, dataset: list, type: str = "top1"):
         c = define_color(optimizer)
         plt.plot(tot_time, test_accuracy, '-', color=c, label="{} Testing".format(optimizer))
 
-    network = k.split("_")[3] if k.split("_")[3][-1] != "r" else k.split("_")[3][:8]
+    network = get_network(k)
 
     plt.title(f"Testing: {network.capitalize()} on {dataset[0]}")
     plt.xlabel("Time (s)")
     plt.ylabel("Accuracy")
-    # plt.ylim(0.25, 0.55)
+    plt.grid()
+    plt.ylim(0.70, 0.82)
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"results/{loc}/testaccuracyWCT_{dataset[0]}_{network.capitalize()}")
@@ -218,22 +239,25 @@ def main(models_to_plot: list, loc: str, dataset: list, type: str) -> None:
     #                  loc = loc, # loc on the results folder
     #                  dataset = dataset,
     #                  type = type)
-    plot_curves_together(results = results,
-                         loc = loc,
-                         dataset = dataset,
-                         type = type)
-    plot_WCT_together(results = results,
-                         loc = loc,
-                         dataset = dataset,
-                         type = type)
+    plot_curves_together(results=results,
+                         loc=loc,
+                         dataset=dataset,
+                         type=type)
+    plot_WCT_together(results=results,
+                      loc=loc,
+                      dataset=dataset,
+                      type=type)
 
 
 if __name__ == "__main__":
-    models_to_plot = ["date=2024-02-08_results_trial=0_resnet18Cifar_CIFAR10_kfac_weight_decay=0.0005_momentum=0.9_stat_decay=0.95_damping=0.003_kl_clip=0.001_TCov=10.0_TInv=100.0_batch_averaged=1.0_CosineAnnealingLRT_max=200.0_LR=0.001",
-                      "date=2024-02-08_results_trial=0_resnet18Cifar_CIFAR10_Adam_weight_decay=0.0005_CosineAnnealingLRT_max=200.0_LR=0.001",
-                      "date=2024-02-08_results_trial=0_resnet18Cifar_CIFAR10_AdaFisher_weight_decay=0.0005_beta3=0.91_Lambda=0.003_TCov=10.0_CosineAnnealingLRT_max=200.0_LR=0.01",
-                      "date=2024-02-08_results_trial=0_resnet18Cifar_CIFAR10_AdaFisherW_weight_decay=0.0005_beta3=0.91_Lambda=0.003_CosineAnnealingLRT_max=200.0_LR=0.01"]
-    loc = "Resnet18"
-    dataset = ["CIFAR10"]
+    models_to_plot = [
+        "date=2024-02-28-09-47-54_results_trial=0_resnet101Cifar_CIFAR100_Adam_weight_decay=0.0005_CosineAnnealingLRT_max=200.0_LR=0.001",
+        "date=2024-02-28-14-48-15_results_trial=0_resnet101Cifar_CIFAR100_kfac_weight_decay=0.0005_momentum=0.9_stat_decay=0.95_damping=0.003_kl_clip=0.001_TCov=10.0_TInv=100.0_batch_averaged=1.0_CosineAnnealingLRT_max=200.0_LR=0.001",
+        "date=2024-03-24-16-22-10_results_trial=0_resnet101Cifar_CIFAR100_Shampoo_weight_decay=0.0005_damping=1e-12_momentum=0.9_curvature_update_interval=100.0_ema_decay=-1.0_clipping_norm=1.0_CosineAnnealingLRT_max=200.0_LR=0.3",
+        "date=2024-03-24-17-38-22_results_trial=0_resnet101Cifar_CIFAR100_AdaFisher_weight_decay=0.0005_gamma=0.91_Lambda=0.003_TCov=100.0_CosineAnnealingLRT_max=200.0_LR=0.001",
+        "date=2024-03-25-20-22-05_results_trial=0_resnet101Cifar_CIFAR100_AdaHessian_weight_decay=0.0005_hessian_power=1.0_CosineAnnealingLRT_max=200.0_LR=0.15"
+        ]
+    loc = "Resnet101"
+    dataset = ["CIFAR100"]
     type = "top1"
-    main(models_to_plot = models_to_plot, loc = loc, dataset=dataset, type=type)
+    main(models_to_plot=models_to_plot, loc=loc, dataset=dataset, type=type)

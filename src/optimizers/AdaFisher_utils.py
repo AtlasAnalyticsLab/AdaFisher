@@ -5,6 +5,13 @@ from math import prod
 from torch.nn import Module, Linear, Conv2d, BatchNorm2d, LayerNorm
 
 
+def ModifyMinMaxNormalization(tensor: Tensor, factor: int, epsilon: float = 1e-12) -> Tensor:
+    min_tensor = tensor.min()
+    max_tensor = tensor.max()
+    range_tensor = max_tensor - min_tensor
+    return tensor.add_(-min_tensor).div_(range_tensor * factor + epsilon)
+
+
 def update_running_avg(new: Tensor, current: Dict[Module, Tensor], beta3: float):
     """
     Update the running average of parameters with a new value using a specified beta3 coefficient.
@@ -28,9 +35,8 @@ def update_running_avg(new: Tensor, current: Dict[Module, Tensor], beta3: float)
     - This function modifies the `current` dictionary in-place, so it does not return anything.
     Ensure that this behavior is intended in your use case.
     """
-    current *= beta3 / (1 - beta3)
-    current += new
     current *= (1 - beta3)
+    current += new * beta3
 
 
 def _extract_patches(x: Tensor, kernel_size: Tuple[int], stride: Tuple[int], padding: Tuple[int]) -> Tensor:
@@ -61,7 +67,7 @@ def _extract_patches(x: Tensor, kernel_size: Tuple[int], stride: Tuple[int], pad
     """
     if padding[0] + padding[1] > 0:
         x = pad(x, (padding[1], padding[1], padding[0],
-                      padding[0])).data
+                    padding[0])).data
     x = x.unfold(dimension=2, size=kernel_size[0], step=stride[0])
     x = x.unfold(dimension=3, size=kernel_size[1], step=stride[1])
     x = x.transpose_(1, 2).transpose_(2, 3).contiguous()
@@ -80,6 +86,7 @@ class Compute_A_Diag:
     the full covariance matrix. This can significantly reduce computational complexity and memory usage in large
     networks or for specific applications like certain optimization algorithms or initialization strategies.
     """
+
     @classmethod
     def compute_diagcov_a(cls, a, layer) -> Tensor:
         """
@@ -96,7 +103,7 @@ class Compute_A_Diag:
         return cls.__call__(a, layer)
 
     @classmethod
-    def __call__(cls, a: Tensor, layer:Module) -> Tensor:
+    def __call__(cls, a: Tensor, layer: Module) -> Tensor:
         """
         Directly calls the instance to compute the diagonal of the covariance matrix by delegating to layer-specific
         methods.
@@ -258,9 +265,10 @@ class Compute_G_Diag:
         - Tensor: The diagonal of the gradient covariance matrix.
         """
         batch_size = g.shape[0]
+        spatial_size = g.size(2) * g.size(3)
         g = g.transpose(1, 2).transpose(2, 3)
         g = g.reshape(-1, g.size(-1))
-        return einsum('ij,ij->j', g, g) / batch_size
+        return einsum('ij,ij->j', g, g) / (batch_size * spatial_size)
 
     @staticmethod
     def linear(g: Tensor, layer: Linear) -> Tensor:
@@ -291,8 +299,9 @@ class Compute_G_Diag:
         Returns:
         - Tensor: The diagonal of the gradient covariance matrix.
         """
-        sum_g = mean(g, dim=(0, 2, 3))
-        return einsum('i,i->i', sum_g, sum_g)
+        batch_size = g.size(0)
+        sum_g = sum(g, dim=(0, 2, 3))
+        return einsum('i,i->i', sum_g, sum_g) / batch_size
 
     @staticmethod
     def layernorm(g: Tensor, layer: LayerNorm) -> Tensor:
@@ -306,5 +315,6 @@ class Compute_G_Diag:
         Returns:
         - Tensor: The diagonal of the gradient covariance matrix.
         """
-        sum_g = mean(g, dim=tuple(range(g.ndim - 1)))
-        return einsum('i,i->i', sum_g, sum_g)
+        batch_size = g.size(0)
+        sum_g = sum(g, dim=tuple(range(g.ndim - 1)))
+        return einsum('i,i->i', sum_g, sum_g) / batch_size

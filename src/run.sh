@@ -2,10 +2,10 @@
 
 ################################ TRAINING BATCH FILE ###############################
 ######## AadFisher Training ########
-#python train.py --config configs/AdaFisherCNN.yaml # you can change on the yaml file for AdaFisherW
+python train.py --config configs/AdaFisherViT.yaml # you can change on the yaml file for AdaFisherW
 
 ######## Adam Training ########
-python train.py --config configs/adam.yaml # You can change on the yaml file for AdamW
+#python train.py --config configs/adamCNN.yaml # You can change on the yaml file for AdamW
 
 ######## AdaHessian Training ########
 #python train.py --config configs/AdaHessian.yaml

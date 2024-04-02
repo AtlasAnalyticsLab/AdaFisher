@@ -1,0 +1,31 @@
+{
+  "dataset": "CIFAR100",
+  "network": "resnet50Cifar",
+  "optimizer": "kfac",
+  "scheduler": "CosineAnnealingLR",
+  "init_lr": 0.001,
+  "early_stop_threshold": -1.0,
+  "optimizer_kwargs": {
+    "weight_decay": 0.0005,
+    "momentum": 0.9,
+    "stat_decay": 0.95,
+    "damping": 0.003,
+    "kl_clip": 0.001,
+    "TCov": 10.0,
+    "TInv": 100.0,
+    "batch_averaged": 1.0
+  },
+  "scheduler_kwargs": {
+    "T_max": 200.0
+  },
+  "cutout": false,
+  "n_holes": 1,
+  "cutout_length": 16,
+  "n_trials": 1,
+  "num_workers": 16,
+  "max_epochs": 200,
+  "mini_batch_size": 256,
+  "distributed": false,
+  "loss": "cross_entropy",
+  "early_stop_patience": 10
+}

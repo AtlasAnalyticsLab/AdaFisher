@@ -228,7 +228,7 @@ class SwinTransformer(nn.Module):
 
 def swin_t(num_classes:int, hidden_dim=96, layers=(2, 2, 6, 2), heads=(3, 6, 12, 24), **kwargs):
     return SwinTransformer(num_classes=num_classes, hidden_dim=hidden_dim, layers=layers, heads=heads,
-                           downscaling_factors = (2,2,2,1), window_size = 4, **kwargs)
+                           downscaling_factors = (2,2,2,1), window_size = 2, **kwargs)
 
 
 def swin_s(num_classes:int, hidden_dim=96, layers=(2, 2, 18, 2), heads=(3, 6, 12, 24), **kwargs):

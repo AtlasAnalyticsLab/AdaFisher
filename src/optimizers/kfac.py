@@ -118,9 +118,6 @@ class KFACOptimizer(optim.Optimizer):
         v1 = self.Q_g[m].t() @ p_grad_mat @ self.Q_a[m]
         v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + damping)
         v = self.Q_g[m] @ v2 @ self.Q_a[m].t()
-        print("v1", v1.flatten())
-        print("v2", v2.flatten())
-        print("v", v.flatten())
         if m.bias is not None:
             # we always put gradient w.r.t weight in [0]
             # and w.r.t bias in [1]

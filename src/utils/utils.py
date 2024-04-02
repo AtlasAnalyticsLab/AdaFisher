@@ -54,7 +54,7 @@ def smart_string_to_int(
 def parse_config(
         config: Dict[str, Union[str, float, int]]) -> Dict[
     str, Union[str, float, int]]:
-    valid_dataset = ['CIFAR10', 'CIFAR100', 'ImageNet', 'TinyImageNet', 'MHIST']
+    valid_dataset = ['CIFAR10', 'CIFAR100', 'ImageNet', 'TinyImageNet']
     if config['dataset'] not in valid_dataset:
         raise ValueError(
             f"config.yaml: unknown dataset {config['dataset']}. " +
@@ -65,7 +65,7 @@ def parse_config(
         'densenet121Cifar', 'resnet18', 'resnet18Cifar', 'resnet34', 'resnet34Cifar', 'resnet50', 'resnet50Cifar',
         'resnet101', 'resnet101Cifar', 'resnet152', 'resnet152Cifar', 'resnext50', 'resnext101', 'wide_resnet50',
         'wide_resnet101', 'efficientnet_B0Cifar', 's_ViT', 'swin_t', 'swin_s', 'swin_b', 'swin_l', 'deepvit',
-        'cct',
+        'cct', 'focalnet', 'mobilenetv3',
     }
     if config['network'] not in valid_models:
         raise ValueError(

@@ -6,11 +6,9 @@ from optimizers.AdaFisher import AdaFisher
 from optimizers.AdaFisherW import AdaFisherW
 from optimizers.Apollo import Apollo
 from optimizers.sam import SAM
-from optimizers.kfac import KFACOptimizer as kfac
-from optimizers.ekfac import EKFACOptimizer as ekfac
-from optimizers.Shampoo import Shampoo
 from optimizers.sgd import SGD
-from optimizers.lr_scheduler import StepLR, CosineAnnealingWarmRestarts, CosineAnnealingLR, OneCycleLR, MultiStepLR
+from optimizers.kfac import KFACOptimizer
+from optimizers.lr_scheduler import StepLR, CosineAnnealingWarmRestarts, CosineAnnealingLR, OneCycleLR, MultiStepLR, LinearLR
 import torch
 
 
@@ -58,18 +56,19 @@ def get_optimizer_scheduler(
     elif optim_method == 'Apollo':
         optimizer = Apollo(net.parameters(), lr=init_lr,
                              **optim_processed_kwargs)
-    elif optim_method == 'kfac':
-        optimizer = kfac(net, lr=init_lr,
-                             **optim_processed_kwargs)
-    elif optim_method == 'ekfac':
-        optimizer = ekfac(net, lr=init_lr,
-                             **optim_processed_kwargs)
     elif optim_method == 'SAM':
         optimizer = SAM(net.parameters(), SGD, lr=init_lr,
                            **optim_processed_kwargs)
-    elif optim_method == 'Shampoo':
-        optimizer = Shampoo(net.parameters(), lr=init_lr,
-                           **optim_processed_kwargs)
+    elif optim_method == 'kfac':
+        optimizer = KFACOptimizer(net, lr=init_lr,
+                                  **optim_processed_kwargs)
+    elif optim_method in ['Shampoo']:  # , 'kfac']:
+        optimizer = SGD(
+            net.parameters(),
+            lr=init_lr,
+            weight_decay=optim_processed_kwargs["weight_decay"],
+            momentum=optim_processed_kwargs["momentum"]
+        )
     else:
         raise ValueError(f"Warning: Unknown optimizer {optim_method}")
     if lr_scheduler == 'StepLR':
@@ -115,6 +114,10 @@ def get_optimizer_scheduler(
             optimizer, max_lr=init_lr,
             steps_per_epoch=train_loader_len, epochs=max_epochs,
             **scheduler_processed_kwargs)
+    elif lr_scheduler == 'LinearLR':
+        scheduler = LinearLR(
+            optimizer
+        )
     elif lr_scheduler not in ['None', '']:
         print(f"Warning: Unknown LR scheduler {lr_scheduler}")
 

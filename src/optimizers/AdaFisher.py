@@ -5,8 +5,7 @@ from torch import (Tensor, kron, is_grad_enabled, no_grad, zeros_like,
                    preserve_format, ones_like)
 from torch.optim import Optimizer
 from torch.nn import Module, Parameter
-from optimizers.AdaFisher_utils import (Compute_A_Diag, Compute_G_Diag, update_running_avg)
-
+from optimizers.AdaFisher_utils import (Compute_A_Diag, Compute_G_Diag, update_running_avg, ModifyMinMaxNormalization)
 __all__ = ['AdaFisher']
 
 
@@ -33,7 +32,7 @@ class AdaFisher(Optimizer):
        ```python
        import torch
        model = MyModel()
-       optimizer = AdaFisher(model, lr=1e-3, beta=0.9, beta3=0.91, Lambda=1e-3, eps=1e-8, TCov=10, weight_decay=0)
+       optimizer = AdaFisher(model, lr=1e-3, beta=0.9, gamma=0.91, Lambda=1e-3, eps=1e-8, TCov=10, weight_decay=0)
 
        for input, target in dataset:
            optimizer.zero_grad()
@@ -47,10 +46,10 @@ class AdaFisher(Optimizer):
 
     def __init__(self,
                  model: Module,
-                 lr: float = 1e-2,
-                 betas: tuple = (0.9, 0.999),
+                 lr: float = 1e-3,
+                 beta: float = 0.9,
                  Lambda: float = 1e-3,
-                 beta3=0.91,
+                 gamma=0.98,
                  eps: float = 1e-8,
                  TCov: int = 10,
                  weight_decay: float = 0
@@ -62,7 +61,7 @@ class AdaFisher(Optimizer):
                 - lr (float, optional): Learning rate. Default is 1e-3.
                 - beta (float, optional): The beta1 parameter in the optimizer, controlling the moving average of
                 gradients. Default is 0.9.
-                - beta3 (float, optional): The beta3 parameter in the optimizer, controlling the moving average of
+                - gamma (float, optional): The gamma parameter in the optimizer, controlling the moving average of
                 kronecker factors A and G. Default is 0.91.
                 - Lambda (float, optional): Tikhonov Damping term added to the Fisher Information Matrix (FIM)
                 to stabilize inversion. Default is 1e-3.
@@ -86,18 +85,16 @@ class AdaFisher(Optimizer):
             raise ValueError(f"Invalid learning rate: {lr}")
         if not 0.0 <= eps:
             raise ValueError("Invalid epsilon value: {}".format(eps))
-        if not 0.0 <= betas[0] < 1.0:
-            raise ValueError(f"Invalid beta parameter at index 0: {betas[0]}")
-        if not 0.0 <= betas[1] < 1.0:
-            raise ValueError(f"Invalid beta parameter at index 1: {betas[1]}")
-        if not 0.0 <= beta3 < 1.0:
-            raise ValueError(f"Invalid beta3 parameter: {beta3}")
+        if not 0.0 <= beta < 1.0:
+            raise ValueError(f"Invalid beta parameter: {beta}")
+        if not 0.0 <= gamma < 1.0:
+            raise ValueError(f"Invalid gamma parameter: {gamma}")
         if not TCov > 0:
             raise ValueError(f"Invalid TCov parameter: {TCov}")
-        defaults = dict(lr=lr, betas=betas, eps=eps,
+        defaults = dict(lr=lr, beta=beta, eps=eps,
                         weight_decay=weight_decay)
 
-        self.beta3 = beta3
+        self.gamma = gamma
         self.Lambda = Lambda
         self.model = model
         self.TCov = TCov
@@ -147,7 +144,7 @@ class AdaFisher(Optimizer):
             diag_A = self.Cov_AMatrix(input[0].data, module)
             if self.steps == 0:
                 self.diag_A[module] = diag_A.new(diag_A.size(0)).fill_(1)
-            update_running_avg(diag_A, self.diag_A[module], self.beta3)
+            update_running_avg(ModifyMinMaxNormalization(diag_A, 10), self.diag_A[module], self.gamma)
 
     def _save_grad_output(self, module: Module, grad_input: Tensor, grad_output: Tensor):
         """
@@ -184,7 +181,7 @@ class AdaFisher(Optimizer):
             diag_G = self.Cov_GMatrix(grad_output[0].data, module)
             if self.steps == 0:
                 self.diag_G[module] = diag_G.new(diag_G.size(0)).fill_(1)
-            update_running_avg(diag_G, self.diag_G[module], self.beta3)
+            update_running_avg(ModifyMinMaxNormalization(diag_G, 10), self.diag_G[module], self.gamma)
 
     def _prepare_model(self):
         """
@@ -253,12 +250,8 @@ class AdaFisher(Optimizer):
         H = kron(self.diag_A[module].unsqueeze(1), self.diag_G[module].unsqueeze(0)).t() + self.Lambda
         if module.bias is not None:
             H = [H[:, :-1], H[:, -1:]]
-            H[0].view(*module.weight.grad.data.size())
-            H[1].view(*module.bias.grad.data.size())
-            H[0].squeeze_(1)
-            H[1].squeeze_(1)
-            if module.weight.grad.data.ndim != H[0].ndim:
-                H[0].unsqueeze_(-1).unsqueeze_(-1)
+            H[0] = H[0].view(*module.weight.grad.data.size())
+            H[1] = H[1].view(*module.bias.grad.data.size())
             return H
         else:
             return H.reshape(module.weight.grad.data.size())
@@ -333,24 +326,17 @@ class AdaFisher(Optimizer):
             # Exponential moving average of gradient values
             state['exp_avg'] = zeros_like(
                 param, memory_format=preserve_format)
-            # Exponential moving average of squared of the Curvature information
-            state['exp_avg_Fisher'] = zeros_like(
-                param, memory_format=preserve_format)
-        exp_avg, exp_avg_Fisher = state['exp_avg'], state['exp_avg_Fisher']
-        beta1, beta2 = hyperparameters['betas']
+        exp_avg = state['exp_avg']
+        beta = hyperparameters['beta']
         state['step'] += 1
-        bias_correction1 = 1 - beta1 ** state['step']
-        bias_correction2 = 1 - beta2 ** state['step']
-
+        bias_correction1 = 1 - beta ** state['step']
         if hyperparameters['weight_decay'] != 0:
             grad = grad.add(param, alpha=hyperparameters['weight_decay'])
         # Decay the first and second moment running average coefficient
-        exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-        exp_avg_Fisher.mul_(beta2).addcmul_(update, update, value=1 - beta2)
-        denom = ((exp_avg_Fisher ** 0.25) / (bias_correction2 ** 0.25)).add_(hyperparameters['eps'])
+        exp_avg.mul_(beta).add_(grad, alpha=1 - beta)
         step_size = hyperparameters['lr'] / bias_correction1
         # Update Rule
-        param.addcdiv_(exp_avg, denom, value=-step_size)
+        param.addcdiv_(exp_avg, update, value=-step_size)
 
     @no_grad()
     def step(self, closure: Union[None, Callable[[], Tensor]] = None):
@@ -380,7 +366,7 @@ class AdaFisher(Optimizer):
         for group in self.param_groups:
             idx_param, idx_module, buffer_count = 0, 0, 0
             param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'], "eps": group['eps'],
-                                                       "betas": group['betas'], "lr": group['lr']}
+                                                       "beta": group['beta'], "lr": group['lr']}
             for _ in range(len(self.modules)):
                 if param[idx_param].grad is None:
                     idx_param += 1

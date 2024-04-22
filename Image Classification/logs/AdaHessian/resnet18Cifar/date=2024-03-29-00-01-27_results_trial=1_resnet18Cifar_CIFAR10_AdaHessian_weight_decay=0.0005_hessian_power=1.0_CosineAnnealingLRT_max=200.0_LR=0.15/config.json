@@ -1,0 +1,24 @@
+{
+  "dataset": "CIFAR10",
+  "network": "resnet18Cifar",
+  "optimizer": "AdaHessian",
+  "scheduler": "CosineAnnealingLR",
+  "init_lr": 0.15,
+  "early_stop_threshold": -1.0,
+  "optimizer_kwargs": {
+    "weight_decay": 0.0005,
+    "hessian_power": 1.0
+  },
+  "scheduler_kwargs": {
+    "T_max": 200.0
+  },
+  "cutout": false,
+  "n_holes": 1,
+  "cutout_length": 16,
+  "n_trials": 5,
+  "num_workers": 2,
+  "max_epochs": 200,
+  "mini_batch_size": 256,
+  "loss": "cross_entropy",
+  "early_stop_patience": 10
+}

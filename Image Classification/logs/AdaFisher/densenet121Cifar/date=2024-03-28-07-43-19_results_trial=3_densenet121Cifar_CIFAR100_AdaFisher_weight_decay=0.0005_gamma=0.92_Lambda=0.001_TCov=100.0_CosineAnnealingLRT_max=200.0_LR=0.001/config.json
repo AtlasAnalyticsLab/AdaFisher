@@ -1,0 +1,28 @@
+{
+  "dataset": "CIFAR100",
+  "network": "densenet121Cifar",
+  "optimizer": "AdaFisher",
+  "scheduler": "CosineAnnealingLR",
+  "init_lr": 0.001,
+  "early_stop_threshold": -1.0,
+  "optimizer_kwargs": {
+    "weight_decay": 0.0005,
+    "gamma": 0.92,
+    "Lambda": 0.001,
+    "TCov": 100.0
+  },
+  "scheduler_kwargs": {
+    "T_max": 200.0
+  },
+  "cutout": false,
+  "n_holes": 1,
+  "cutout_length": 16,
+  "clip": false,
+  "clip_norm": 1,
+  "n_trials": 5,
+  "num_workers": 2,
+  "max_epochs": 200,
+  "mini_batch_size": 256,
+  "loss": "cross_entropy",
+  "early_stop_patience": 10
+}

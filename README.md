@@ -13,12 +13,12 @@ This repository contains relevant code for using AdaFisher and other current sot
 Note that this repository is based on the RMSGD framework (paper branch). For more information, see the [RMSGD project](https://github.com/mahdihosseini/RMSGD/tree/paper).
 
 ## Usage
-We provide numerous `config.yaml` files to replicate experimental configurations in [configs](configs). Running the code is as simple as 
+We provide numerous `config.yaml` files to replicate experimental configurations in [configs](Image Classification/configs). Running the code is as simple as 
 
 ```console
 python train.py --config config.yaml --output **OUTPUT_DIR**
 ```
 Run `python train.py --help` for other options.
-You can laos use the [run](src/run.sh) file for training based on the optimizer and the config file.
+You can laos use the [run](Image Classification/src/run.sh) file for training based on the optimizer and the config file.
 ## License
 This project is released under the GNU General Public License v3.0. Please see the [LICENSE](LICENSE) file for more information.

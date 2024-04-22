@@ -1,0 +1,28 @@
+{
+  "dataset": "TinyImageNet",
+  "network": "resnet50",
+  "optimizer": "Shampoo",
+  "scheduler": "CosineAnnealingLR",
+  "init_lr": 0.3,
+  "early_stop_threshold": -1.0,
+  "optimizer_kwargs": {
+    "weight_decay": 0.0005,
+    "damping": 1e-12,
+    "momentum": 0.9,
+    "curvature_update_interval": 100.0,
+    "ema_decay": -1.0,
+    "clipping_norm": 1.0
+  },
+  "scheduler_kwargs": {
+    "T_max": 200.0
+  },
+  "cutout": false,
+  "n_holes": 1,
+  "cutout_length": 16,
+  "n_trials": 4,
+  "num_workers": 5,
+  "max_epochs": 200,
+  "mini_batch_size": 256,
+  "loss": "cross_entropy",
+  "early_stop_patience": 10
+}

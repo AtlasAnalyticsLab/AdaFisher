@@ -326,6 +326,24 @@ class TrainingAgent:
             if self.early_stop(train_loss):
                 print("Info: Early stop activated.")
                 break
+            if not self.dist:
+                data = {'epoch': epoch + 1,
+                        'trial': trial,
+                        'config': self.config,
+                        'state_dict_network': self.network.state_dict(),
+                        'state_dict_optimizer': self.optimizer.state_dict(),
+                        'state_dict_scheduler': self.scheduler.state_dict()
+                        if self.scheduler is not None else None,
+                        'best_acc1': self.best_acc1,
+                        'output_filename': Path(self.output_filename).name}
+                if epoch % self.save_freq == 0:
+                    filename = f'trial_{trial}_epoch_{epoch}.pth.tar'
+                    torch.save(data, str(self.checkpoint_path / filename))
+                if np.greater(test_acc1, self.best_acc1):
+                    self.best_acc1 = test_acc1
+                    torch.save(
+                        data, str(self.checkpoint_path / 'best.pth.tar'))
+                torch.save(data, str(self.checkpoint_path / 'last.pth.tar'))
 
     def epoch_iteration(self, trial: int, epoch: int):
         self.network.train()

@@ -5,8 +5,7 @@ from torch import (Tensor, kron, is_grad_enabled, no_grad, zeros_like,
                    preserve_format, ones_like, cat)
 from torch.optim import Optimizer
 from torch.nn import Module, Parameter
-from optimizers.AdaFisher_utils import (Compute_A_Diag, Compute_G_Diag, update_running_avg, MinMaxNormalization,
-                                        compute_inv)
+from optimizers.AdaFisher_utils import (Compute_A_Diag, Compute_G_Diag, update_running_avg, MinMaxNormalization)
 
 __all__ = ['AdaFisher']
 

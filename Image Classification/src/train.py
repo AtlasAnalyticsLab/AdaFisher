@@ -40,6 +40,17 @@ def args(sub_parser: _SubParsersAction):
         default='logs', type=str,
         help="Set output directory path: Default = 'logs'")
     sub_parser.add_argument(
+        '--checkpoint', dest='checkpoint',
+        default='checkpoint', type=str,
+        help="Set checkpoint directory path: Default = 'checkpoint'")
+    sub_parser.add_argument(
+        '--resume', dest='resume',
+        default=None, type=str,
+        help="Set checkpoint resume path: Default = None")
+    sub_parser.add_argument(
+        '--save-freq', default=25, type=int,
+        help='Checkpoint epoch save frequency: Default = 25')
+    sub_parser.add_argument(
         '--root', dest='root',
         default='./../', type=str,
         help="Set root path of project that parents all others: Default = './../'")
@@ -70,6 +81,7 @@ class TrainingAgent:
     scheduler = None
     loss = None
     output_filename: Path = None
+    checkpoint = None
 
     def __init__(
             self,
@@ -77,6 +89,9 @@ class TrainingAgent:
             device: str,
             output_path: Path,
             data_path: Path,
+            checkpoint_path: Path,
+            resume: Path = None,
+            save_freq: int = 25,
             dist: bool = False,
             clip: bool = False,
             clip_norm: int = 1) -> None:
@@ -94,6 +109,9 @@ class TrainingAgent:
         self.clip_norm = clip_norm
         self.data_path = data_path
         self.output_path = output_path
+        self.checkpoint_path = checkpoint_path
+        self.resume = resume
+        self.save_freq = save_freq
 
         self.load_config(config_path, data_path)
         print("Experiment Configuration")
@@ -124,18 +142,28 @@ class TrainingAgent:
             patience=int(config['early_stop_patience']),
             threshold=float(config['early_stop_threshold']))
         cudnn.benchmark = True  # This command is time consuming for the first epochs
+        if self.resume is not None:
+            if self.gpu is None:
+                self.checkpoint = torch.load(str(self.resume))
+            else:
+                self.checkpoint = torch.load(
+                    str(self.resume),
+                    map_location=f'cuda:{self.gpu}')
+            self.start_epoch = self.checkpoint['epoch']
+            self.start_trial = self.checkpoint['trial']
+            self.best_acc1 = self.checkpoint['best_acc1']
+            print(f'Resuming config for trial {self.start_trial} at ' +
+                  f'epoch {self.start_epoch}')
 
     def reset(self, learning_rate: float) -> None:
-        self.network = get_network(name=self.config['network'],
-                                   num_classes=self.num_classes)
+        self.network = get_network(name=self.config['network'], num_classes=self.num_classes)
         if self.device == 'cpu':
             print("Resetting cpu-based network")
         elif self.dist:
             self.network.to(self.gpu)
             self.network = nn.SyncBatchNorm.convert_sync_batchnorm(self.network)
             self.network = torch.nn.parallel.DistributedDataParallel(
-                self.network,
-                device_ids=[self.gpu])
+                self.network, device_ids=[self.gpu])
         else:
             self.network = self.network.cuda(self.gpu)
 
@@ -187,16 +215,27 @@ class TrainingAgent:
         for trial in range(self.start_trial,
                            self.config['n_trials']):
             self.reset(learning_rate)
-            epochs = range(0, self.config['max_epochs'])
-            output_path_net = self.create_output_dir()
-            self.output_filename = f"date={datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_" + \
-                                   "results_" + f"trial={trial}_" + \
-                                   f"{self.config['network']}_" + f"{self.config['dataset']}_" + \
-                                   f"{self.config['optimizer']}_" + '_'.join([f"{k}={v}" for k, v in
-                                                                              self.config[
-                                                                                  'optimizer_kwargs'].items()]) + f"_{self.config['scheduler']}" + \
-                                   '_'.join([f"{k}={v}" for k, v in self.config['scheduler_kwargs'].items()]) + \
-                                   f"_LR={learning_rate}"
+            if trial == self.start_trial and self.resume is not None:
+                print("Resuming Network/Optimizer")
+                self.network.load_state_dict(
+                    self.checkpoint['state_dict_network'])
+                self.optimizer.load_state_dict(
+                    self.checkpoint['state_dict_optimizer'])
+                self.scheduler.load_state_dict(
+                    self.checkpoint['state_dict_scheduler'])
+                epochs = range(self.start_epoch, self.config['max_epochs'])
+                output_path_net = self.create_output_dir()
+                self.output_filename = self.checkpoint['output_filename']
+
+            else:
+                epochs = range(0, self.config['max_epochs'])
+                output_path_net = self.create_output_dir()
+                self.output_filename = ((f"date={datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_results_trial={trial}_"
+                                        f"{self.config['network']}_{self.config['dataset']}_{self.config['optimizer']}_")
+                                        + '_'.join([f"{k}={v}" for k, v in self.config['optimizer_kwargs'].items()]) +
+                                        f"_{self.config['scheduler']}" +
+                                        '_'.join([f"{k}={v}" for k, v in self.config['scheduler_kwargs'].items()]) +
+                                        f"_LR={learning_rate}")
 
             lr_output_path = output_path_net / self.output_filename
             lr_output_path.mkdir(exist_ok=True, parents=True)
@@ -402,6 +441,7 @@ def setup_dirs(args: APNamespace) -> Tuple[Path, Path, Path, Path]:
     config_path = root_path / Path(args.config).expanduser()
     data_path = root_path / Path(args.data).expanduser()
     output_path = root_path / Path(args.output).expanduser()
+    checkpoint_path = root_path / Path(args.checkpoint).expanduser()
     if not config_path.exists():
         raise ValueError(f"Info: Config path {config_path} does not exist")
     if not data_path.exists():
@@ -410,7 +450,12 @@ def setup_dirs(args: APNamespace) -> Tuple[Path, Path, Path, Path]:
     if not output_path.exists():
         print(f"Info: Output dir {output_path} does not exist, building")
         output_path.mkdir(exist_ok=True, parents=True)
-    return config_path, output_path, data_path
+    if not checkpoint_path.exists():
+        checkpoint_path.mkdir(exist_ok=True, parents=True)
+    if args.resume is not None:
+        if not Path(args.resume).exists():
+            raise ValueError("Resume path does not exist")
+    return config_path, output_path, data_path, checkpoint_path, Path(args.resume) if args.resume is not None else None
 
 
 def main(args: APNamespace):
@@ -421,8 +466,7 @@ def main(args: APNamespace):
         attr = attr if attr is not None else "None"
         print(f"    {arg:<20}: {attr:<40}")
     print("-" * 45)
-    args.config_path, args.output_path, \
-        args.data_path = setup_dirs(args)
+    args.config_path, args.output_path, args.data_path, args.checkpoint_path, args.resume = setup_dirs(args)
     if args.dist:
         init_process_group(backend='nccl')
         main_worker(args)
@@ -439,6 +483,9 @@ def main_worker(args: APNamespace):
         device=device,
         output_path=args.output_path,
         data_path=args.data_path,
+        resume=args.resume,
+        save_freq=args.save_freq,
+        checkpoint_path=args.checkpoint_path,
         dist=args.dist,
         clip=args.clip,
         clip_norm=args.clip_norm)

@@ -142,6 +142,7 @@ class TrainingAgent:
             patience=int(config['early_stop_patience']),
             threshold=float(config['early_stop_threshold']))
         cudnn.benchmark = True  # This command is time consuming for the first epochs
+        self.checkpoint_path = self.create_output_dir(checkpoint=True)
         if self.resume is not None:
             if self.gpu is None:
                 self.checkpoint = torch.load(str(self.resume))
@@ -197,18 +198,29 @@ class TrainingAgent:
                 raise ValueError(f"This optimizer is not reconized: {self.config['optimizer']}")
         self.early_stop.reset()
 
-    def create_output_dir(self):
+    def create_output_dir(self, checkpoint: bool = False):
         opt = self.config['optimizer']
         net = self.config['network']
-        output_path_opt = self.output_path / Path(opt).expanduser()
-        if not output_path_opt.exists():
-            print(f"Info: Output dir {output_path_opt} does not exist, building")
-            output_path_opt.mkdir(exist_ok=True, parents=True)
-        output_path_net = output_path_opt / Path(net).expanduser()
-        if not output_path_net.exists():
-            print(f"Info: Output dir {output_path_net} does not exist, building")
-            output_path_net.mkdir(exist_ok=True, parents=True)
-        return output_path_net
+        if checkpoint:
+            output_path_checkpoint_opt = self.checkpoint_path / Path(opt).expanduser()
+            if not output_path_checkpoint_opt.exists():
+                print(f"Info: Checkpoint dir {output_path_checkpoint_opt} does not exist, building")
+                output_path_checkpoint_opt.mkdir(exist_ok=True, parents=True)
+            output_path_checkpoint_net = output_path_checkpoint_opt / Path(net).expanduser()
+            if not output_path_checkpoint_net.exists():
+                print(f"Info: Checkpoint dir {output_path_checkpoint_net} does not exist, building")
+                output_path_checkpoint_net.mkdir(exist_ok=True, parents=True)
+            return output_path_checkpoint_net
+        else:
+            output_path_opt = self.output_path / Path(opt).expanduser()
+            if not output_path_opt.exists():
+                print(f"Info: Output dir {output_path_opt} does not exist, building")
+                output_path_opt.mkdir(exist_ok=True, parents=True)
+            output_path_net = output_path_opt / Path(net).expanduser()
+            if not output_path_net.exists():
+                print(f"Info: Output dir {output_path_net} does not exist, building")
+                output_path_net.mkdir(exist_ok=True, parents=True)
+            return output_path_net
 
     def train(self) -> None:
         learning_rate = self.config['init_lr']

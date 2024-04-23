@@ -7,7 +7,6 @@ from optimizers.AdaFisherW import AdaFisherW
 from optimizers.Apollo import Apollo
 from optimizers.sam import SAM
 from optimizers.sgd import SGD
-from optimizers.kfac import KFACOptimizer
 from optimizers.lr_scheduler import StepLR, CosineAnnealingWarmRestarts, CosineAnnealingLR, OneCycleLR, MultiStepLR, LinearLR
 import torch
 
@@ -59,10 +58,7 @@ def get_optimizer_scheduler(
     elif optim_method == 'SAM':
         optimizer = SAM(net.parameters(), SGD, lr=init_lr,
                            **optim_processed_kwargs)
-    elif optim_method == 'kfac':
-        optimizer = KFACOptimizer(net, lr=init_lr,
-                                  **optim_processed_kwargs)
-    elif optim_method in ['Shampoo']:  # , 'kfac']:
+    elif optim_method in ['Shampoo', 'kfac']:
         optimizer = SGD(
             net.parameters(),
             lr=init_lr,

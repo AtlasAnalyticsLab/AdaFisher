@@ -148,7 +148,7 @@ class TrainingAgent:
             else:
                 self.checkpoint = torch.load(
                     str(self.resume),
-                    map_location=f'cuda:{self.gpu}')
+                    map_location=self.gpu)
             self.start_epoch = self.checkpoint['epoch']
             self.start_trial = self.checkpoint['trial']
             self.best_acc1 = self.checkpoint['best_acc1']

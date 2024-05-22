@@ -28,7 +28,7 @@ This section features the implementation of a variety of optimizers, including b
 
 ### 💡 Enhanced Kronecker Factor Analysis and Optimizer Trajectory Visualization on Loss Landscapes
 <center>
-    <img src="imgs/Weight_Trajectories_Loss_Landscape.png" alt="AdaFisher" width="800" height="280">
+    <img src="imgs/Weight_Trajectories_Loss_Landscape.png" alt="AdaFisher" width="800">
 </center>
 
 ---

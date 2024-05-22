@@ -2,7 +2,7 @@
 
 🚀 Official PyTorch implementation of the paper-related **AdaFisher** optimizer code. 
 <center>
-    <img src="imgs/AdaFisher.png" alt="Overview of Project" width="50%">
+    <img src="imgs/AdaFisher.png" alt="Overview of Project">
 </center>
 
 

@@ -62,16 +62,25 @@ def get_data(
         cutout: bool = False,
         n_holes: int = -1,
         length: int = -1,
+        aug: bool = True,
         dist: bool = False) -> None:
     if name == 'CIFAR10':
         num_classes = 10
-        transform_train = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465),
-                                 (0.2023, 0.1994, 0.2010)),
-        ])
+        if aug:
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465),
+                                    (0.2023, 0.1994, 0.2010)),
+            ])
+        else:
+            transform_train = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465),
+                                    (0.2023, 0.1994, 0.2010)),
+            ])
+            
         if cutout:
             transform_train.transforms.append(
                 Cutout(n_holes=n_holes, length=length))
@@ -103,14 +112,22 @@ def get_data(
             num_workers=num_workers, sampler=test_sampler, pin_memory=True)
     elif name == 'CIFAR100':
         num_classes = 100
-        transform_train = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[x / 255.0 for x in [125.3, 123.0, 113.9]], std=[
-                    x / 255.0 for x in [63.0, 62.1, 66.7]]),
-        ])
+        if aug:
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[x / 255.0 for x in [125.3, 123.0, 113.9]], std=[
+                        x / 255.0 for x in [63.0, 62.1, 66.7]]),
+            ])
+        else:
+            transform_train = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[x / 255.0 for x in [125.3, 123.0, 113.9]], std=[
+                        x / 255.0 for x in [63.0, 62.1, 66.7]]),
+            ])
         if cutout:
             transform_train.transforms.append(
                 Cutout(n_holes=n_holes, length=length))

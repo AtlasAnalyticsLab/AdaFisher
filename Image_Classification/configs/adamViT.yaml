@@ -1,25 +1,26 @@
 ###### Application Specific ######
-dataset: 'ImageNet' # options: CIFAR100, CIFAR10, ImageNet, TinyImageNet
-network: 'resnet50' # options: see model_choices.txt
-optimizer: 'Adam' # or AdamW
+dataset: 'CIFAR10' # options: CIFAR100, CIFAR10, TinyImageNet
+network: 'swin_t' # options: see model_choices.txt
+optimizer: 'AdamW' # or AdamW
 scheduler: 'CosineAnnealingLR' # options: see scheduler_choices.txt
 
 ###### Suggested Tune ######
-init_lr: 0.001
+init_lr: 0.0001
 early_stop_threshold: -1 #  set to -1 if you wish not to use early stop,
                          # or equally, set to a high value.
 optimizer_kwargs:  # named-kwargs to pass to optimizer.
-  weight_decay: 5e-4
+  weight_decay: 0.01
 scheduler_kwargs: # named-kwargs to pass to scheduler.
-  T_max: 200
+  T_max: 210
+aug: True
 cutout: False
 n_holes: 1
 cutout_length: 16
 
 ###### Suggested Default ######
 n_trials: 1
-num_workers: 10
-max_epochs: 200
-mini_batch_size: 256
+num_workers: 5
+max_epochs: 210
+mini_batch_size: 128
 loss: 'cross_entropy' # options: cross_entropy
 early_stop_patience: 10 # epoch window to consider when deciding whether to stop

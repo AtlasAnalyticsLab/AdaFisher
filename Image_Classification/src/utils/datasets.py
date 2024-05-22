@@ -1,13 +1,7 @@
-from contextlib import contextmanager
 from pathlib import Path
-
-import warnings
-import tempfile
 import shutil
 import os
-import torch
-from torchvision.datasets.utils import check_integrity,\
-    extract_archive, verify_str_arg, download_and_extract_archive
+from torchvision.datasets.utils import verify_str_arg, download_and_extract_archive
 from torchvision.datasets.folder import ImageFolder
 
 

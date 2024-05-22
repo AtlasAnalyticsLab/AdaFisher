@@ -60,11 +60,10 @@ def parse_config(
             f"config.yaml: unknown dataset {config['dataset']}. " +
             f"Must be one of {valid_dataset}")
     valid_models = {
-        'simple_convnetCifar','densenet201', 'densenet169', 'densenet161',
+        'densenet201', 'densenet169', 'densenet161',
         'densenet121', 'densenet201Cifar', 'densenet169Cifar', 'densenet161Cifar',
         'densenet121Cifar', 'resnet18', 'resnet18Cifar', 'resnet34', 'resnet34Cifar', 'resnet50', 'resnet50Cifar',
-        'resnet101', 'resnet101Cifar', 'resnet152', 'resnet152Cifar', 'resnext50', 'resnext101', 'wide_resnet50',
-        'wide_resnet101', 'efficientnet_B0Cifar', 's_ViT', 'swin_t', 'swin_s', 'swin_b', 'swin_l', 'deepvit',
+        'resnet101', 'resnet101Cifar', 'resnet152', 'resnet152Cifar', 'swin_t', 'swin_s', 'swin_b', 'swin_l',
         'cct', 'focalnet', 'mobilenetv3',
     }
     if config['network'] not in valid_models:

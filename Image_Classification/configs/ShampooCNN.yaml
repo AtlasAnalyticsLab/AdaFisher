@@ -1,7 +1,7 @@
 ###### Application Specific ######
-dataset: 'CIFAR100' # options: CIFAR100, CIFAR10, ImageNet, TinyImageNet
-network: 'mobilenetv3' # options: see model_choices.txt
-optimizer: 'Shampoo'
+dataset: 'CIFAR10' # options: CIFAR100, CIFAR10, TinyImageNet
+network: 'resnet18Cifar' # options: see model_choices.txt
+optimizer: 'Shampoo' 
 scheduler: 'CosineAnnealingLR' # options: see scheduler_choices.txt
 
 
@@ -10,22 +10,23 @@ init_lr: 0.3
 early_stop_threshold: -1 #  set to -1 if you wish not to use early stop,
                          # or equally, set to a high value.
 optimizer_kwargs:  # named-kwargs to pass to optimizer.
-  weight_decay: 6e-5
+  weight_decay: 5e-4
   damping: 1e-12
   momentum: 0.9
-  curvature_update_interval: 100
+  curvature_update_interval: 1
   ema_decay: -1
   clipping_norm: 1
 scheduler_kwargs: # named-kwargs to pass to scheduler.
-  T_max: 200
+  T_max: 36
+aug: True
 cutout: False
 n_holes: 1
 cutout_length: 16
 
 ###### Suggested Default ######
-n_trials: 5
+n_trials: 1
 num_workers: 5
-max_epochs: 200
+max_epochs: 36
 mini_batch_size: 256
 loss: 'cross_entropy' # options: cross_entropy
 early_stop_patience: 10 # epoch window to consider when deciding whether to stop

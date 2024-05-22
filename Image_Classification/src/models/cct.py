@@ -364,16 +364,16 @@ def cct(num_classes: int):
     net = CCT(
         img_size=(32, 32),
         embedding_dim=256,
-        n_conv_layers=2,
+        n_conv_layers=1,
         kernel_size=3,
         stride=2,
         padding=3,
         pooling_kernel_size=3,
         pooling_stride=2,
         pooling_padding=1,
-        num_layers=7,
-        num_heads=4,
-        mlp_ratio=2.,
+        num_layers=2,
+        num_heads=2,
+        mlp_ratio=1.,
         num_classes=num_classes,
         positional_embedding='learnable',  # ['sine', 'learnable', 'none']
     )

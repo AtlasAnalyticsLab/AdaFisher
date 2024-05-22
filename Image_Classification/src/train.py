@@ -3,6 +3,9 @@ from argparse import Namespace as APNamespace, _SubParsersAction, \
 from typing import Tuple, Dict, Any, List
 from datetime import datetime
 from pathlib import Path
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from optimizers.lr_scheduler import CosineAnnealingWarmRestarts, StepLR, OneCycleLR, CosineAnnealingLR
 # import logging
 import warnings
@@ -19,12 +22,12 @@ import nvidia_smi
 from optimizers import get_optimizer_scheduler
 from optimizers.AdaHessian import Adahessian
 from asdl.precondition import PreconditioningConfig, ShampooGradientMaker, KfacGradientMaker
-from optimizers.sam import SAM, disable_running_stats, enable_running_stats
 from utils.early_stop import EarlyStop
 from models import get_network
 from utils.utils import parse_config
 from utils.data import get_data
-
+from torchvision.models import (resnet50, ResNet50_Weights, mobilenet_v3_large, MobileNet_V3_Large_Weights, 
+                               densenet121, DenseNet121_Weights, resnet101, ResNet101_Weights)
 
 def args(sub_parser: _SubParsersAction):
     sub_parser.add_argument(
@@ -47,6 +50,10 @@ def args(sub_parser: _SubParsersAction):
         '--resume', dest='resume',
         default=None, type=str,
         help="Set checkpoint resume path: Default = None")
+    sub_parser.add_argument(
+        '--pretrained',
+        default=0, type=int,
+        help="Pretrained weights for (Resnet50, Resnet101, DenseNet121, MobileNetV3): Default = False")
     sub_parser.add_argument(
         '--save-freq', default=25, type=int,
         help='Checkpoint epoch save frequency: Default = 25')
@@ -94,7 +101,8 @@ class TrainingAgent:
             save_freq: int = 25,
             dist: bool = False,
             clip: bool = False,
-            clip_norm: int = 1) -> None:
+            clip_norm: int = 1,
+            pretrained: bool = False) -> None:
 
         self.dist = dist
         if self.dist:
@@ -112,6 +120,7 @@ class TrainingAgent:
         self.checkpoint_path = checkpoint_path
         self.resume = resume
         self.save_freq = save_freq
+        self.pretrained = pretrained
 
         self.load_config(config_path, data_path)
         print("Experiment Configuration")
@@ -131,7 +140,7 @@ class TrainingAgent:
             warnings.warn("Using CPU will be slow")
         self.train_loader, self.test_loader, self.num_classes = get_data(
             name=config['dataset'], root=data_path, mini_batch_size=config['mini_batch_size'],
-            num_workers=config['num_workers'], cutout=config['cutout'], n_holes=config['n_holes'],
+            num_workers=config['num_workers'], aug=config['aug'], cutout=config['cutout'], n_holes=config['n_holes'],
             length=config['cutout_length'], dist=self.dist)
         self.criterion = torch.nn.CrossEntropyLoss()
         if np.less(float(config['early_stop_threshold']), 0):
@@ -155,9 +164,36 @@ class TrainingAgent:
             self.best_acc1 = self.checkpoint['best_acc1']
             print(f'Resuming config for trial {self.start_trial} at ' +
                   f'epoch {self.start_epoch}')
-
+            
+    def get_pretrained_model(self):
+        if self.config['network'] == "resnet50Cifar":
+            standard_model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+            standard_model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+            num_features = standard_model.fc.in_features
+            standard_model.fc = nn.Linear(num_features, self.num_classes)
+            self.network.load_state_dict(standard_model.state_dict(), strict=False)
+        elif self.config['network'] == "resnet101Cifar":
+            standard_model = resnet101(weights=ResNet101_Weights.IMAGENET1K_V2)
+            standard_model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+            num_features = standard_model.fc.in_features
+            standard_model.fc = nn.Linear(num_features, self.num_classes)
+            self.network.load_state_dict(standard_model.state_dict(), strict=False)
+        elif self.config['network'] == "mobilenetv3":
+            standard_model = mobilenet_v3_large(weights = MobileNet_V3_Large_Weights.IMAGENET1K_V2)
+            standard_model.classifier[3] = torch.nn.Linear(standard_model.classifier[3].in_features, self.num_classes)
+            self.network.load_state_dict(standard_model.state_dict(), strict=False)
+        elif self.config['network'] == "densenet121Cifar":
+            standard_model = densenet121(weights = DenseNet121_Weights.IMAGENET1K_V1)
+            num_features = standard_model.classifier.in_features
+            standard_model.classifier = nn.Linear(num_features, self.num_classes)
+            self.network.load_state_dict(standard_model.state_dict(), strict=False)
+        else:
+            raise NotImplementedError(f"{self.config['network']} does not support pretrained weights yet")
+                
     def reset(self, learning_rate: float) -> None:
         self.network = get_network(name=self.config['network'], num_classes=self.num_classes)
+        if self.pretrained == 1:
+            self.get_pretrained_model()
         if self.device == 'cpu':
             print("Resetting cpu-based network")
         elif self.dist:
@@ -370,17 +406,7 @@ class TrainingAgent:
             if isinstance(self.scheduler, CosineAnnealingWarmRestarts):
                 self.scheduler.step(epoch + batch_idx / len(self.train_loader))
             self.optimizer.zero_grad()
-            if isinstance(self.optimizer, SAM):
-                enable_running_stats(model=self.network)
-                outputs = self.network(inputs)
-                loss = self.criterion(outputs, targets)
-                loss.mean().backward()
-                self.optimizer.first_step(zero_grad=True)
-                disable_running_stats(self.network)
-                outputs = self.network(inputs)
-                self.criterion(outputs, targets).mean().backward()
-                self.optimizer.second_step(zero_grad=True)
-            elif self.config['optimizer'] in ["Shampoo", "kfac"]:
+            if self.config['optimizer'] in ["Shampoo", "kfac"]:
                 dummy_y = self.gm.setup_model_call(self.network, inputs)
                 self.gm.setup_loss_call(self.criterion, dummy_y, targets)
                 outputs, loss = self.gm.forward_and_backward()
@@ -518,7 +544,8 @@ def main_worker(args: APNamespace):
         checkpoint_path=args.checkpoint_path,
         dist=args.dist,
         clip=args.clip,
-        clip_norm=args.clip_norm)
+        clip_norm=args.clip_norm,
+        pretrained=args.pretrained)
     print(f"Info: Pytorch device is set to {training_agent.device}")
     training_agent.train()
 

@@ -1,48 +1,48 @@
-"""Implementation of AdaFisherW"""
+"""Implementation of AdaFisher"""
 
 from typing import Callable, Dict, List, Union, Tuple, Type
 from torch import (Tensor, kron, is_grad_enabled, no_grad, zeros_like,
-                   preserve_format, ones_like)
+                   preserve_format, ones_like, diag)
 from torch.optim import Optimizer
 from torch.nn import Module, Parameter
-from optimizers.AdaFisher_utils import (Compute_H_bar_D, Compute_S_D, update_running_avg, MinMaxNormalization)
+from optimizers.AdaFisher_utils import (Compute_H_bar, Compute_S, update_running_avg, MinMaxNormalization)
+import pickle
+__all__ = ['AdaFisher']
 
-__all__ = ['AdaFisherW']
 
+class AdaFisher(Optimizer):
+    """AdaFisher Optimizer: An adaptive learning rate optimizer that leverages Fisher Information for parameter updates.
 
-class AdaFisherW(Optimizer):
-    """AdaFisherW Optimizer: An adaptive learning rate optimizer that leverages Fisher Information for parameter updates.
+       The AdaFisher optimizer extends traditional optimization techniques by incorporating Fisher Information to
+       adaptively adjust the learning rates based on the curvature of the loss landscape. This approach aims to enhance
+       convergence stability and speed by scaling updates according to the inverse curvature of the parameter space,
+       making it particularly suited for deep learning models where the loss landscape can be highly non-convex.
 
-   The AdaFisherW optimizer extends traditional optimization techniques by incorporating Fisher Information to
-   adaptively adjust the learning rates based on the curvature of the loss landscape. This approach aims to enhance
-   convergence stability and speed by scaling updates according to the inverse curvature of the parameter space,
-   making it particularly suited for deep learning models where the loss landscape can be highly non-convex.
+       Key Features:
+           - Adaptive Learning Rates: Adjusts learning rates based on Fisher Information, potentially leading to faster
+           convergence by taking more informed steps.
+           - Curvature-aware Updates: Utilizes the curvature of the loss landscape to modulate the update steps, aiming
+           to improve optimization efficiency.
+           - Support for Custom Modules: Designed to work with a wide range of neural network architectures by allowing
+           flexible mappings between parameters and modules.
 
-   Key Features:
-       - Adaptive Learning Rates: Adjusts learning rates based on Fisher Information, potentially leading to faster
-       convergence by taking more informed steps.
-       - Curvature-aware Updates: Utilizes the curvature of the loss landscape to modulate the update steps, aiming
-       to improve optimization efficiency.
-       - Support for Custom Modules: Designed to work with a wide range of neural network architectures by allowing
-       flexible mappings between parameters and modules.
+       Usage:
+       AdaFisher should be used similarly to other PyTorch optimizers, with the additional step of preparing the model
+       by registering necessary hooks to compute Fisher Information:
 
-   Usage:
-   AdaFisherW should be used similarly to other PyTorch optimizers, with the additional step of preparing the model
-   by registering necessary hooks to compute Fisher Information:
+       ```python
+       import torch
+       model = MyModel()
+       optimizer = AdaFisher(model, lr=1e-3, beta=0.9, gamma=[0.92, 0.008], Lambda=1e-3, weight_decay=0)
 
-   ```python
-   import torch
-   model = MyModel()
-   optimizer = AdaFisherW(model, lr=1e-3, beta=0.9, gamma=[0.98, 0.008], Lambda=1e-3, weight_decay=0)
-
-   for input, target in dataset:
-       optimizer.zero_grad()
-       output = model(input)
-       loss = loss_fn(output, target)
-       loss.backward()
-       optimizer.step()
-   ```
-    """
+       for input, target in dataset:
+           optimizer.zero_grad()
+           output = model(input)
+           loss = loss_fn(output, target)
+           loss.backward()
+           optimizer.step()
+       ```
+       """
     SUPPORTED_MODULES: Tuple[Type[str], ...] = ("Linear", "Conv2d", "BatchNorm2d", "LayerNorm")
 
     def __init__(self,
@@ -50,35 +50,35 @@ class AdaFisherW(Optimizer):
                  lr: float = 1e-3,
                  beta: float = 0.9,
                  Lambda: float = 1e-3,
-                 gammas: list = [0.98, 0.008],
+                 gammas: list = [0.92, 0.008],
                  TCov: int = 100,
                  weight_decay: float = 0
                  ):
-        """Initializes the AdaFisherW optimizer.
+        """Initializes the AdaFisher optimizer.
 
-        Parameters:
-            - model (Module): The neural network model to optimize.
-            - lr (float, optional): Learning rate. Default is 1e-3.
-            - beta (float, optional): The beta1 parameter in the optimizer, controlling the moving average of
-            gradients. Default is 0.9.
-            - gamma (list, optional): The gamma parameters in the optimizer, controlling the moving average of
-            kronecker factors H and S. Default is [0.92, 0.008].
-            - Lambda (float, optional): Tikhonov Damping term added to the Fisher Information Matrix (FIM)
-            to stabilize inversion. Default is 1e-3.
-            - TCov (int, optional): Time interval for updating the covariance matrices. Default is 100.
-            - weight_decay (float, optional): Weight decay coefficient. Default is 0.
+                Parameters:
+                - model (Module): The neural network model to optimize.
+                - lr (float, optional): Learning rate. Default is 1e-3.
+                - beta (float, optional): The beta1 parameter in the optimizer, controlling the moving average of
+                gradients. Default is 0.9.
+                - gammas (list, optional): The gammas parameter in the optimizer, controlling the moving average of
+                kronecker factors H and S. Default is [0.92, 0.008].
+                - Lambda (float, optional): Tikhonov Damping term added to the Fisher Information Matrix (FIM)
+                to stabilize inversion. Default is 1e-3.
+                - TCov (int, optional): Time interval for updating the covariance matrices. Default is 100.
+                - weight_decay (float, optional): Weight decay coefficient. Default is 0.
 
-        Raises:
-            - ValueError: If any of the provided parameters are out of their expected ranges.
+                Raises:
+                - ValueError: If any of the provided parameters are out of their expected ranges.
 
-        This optimizer extends the traditional optimization methods by incorporating Fisher Information to
-        adaptively adjust the learning rates based on the curvature of the loss landscape. It specifically
-        tracks the covariance of activation and gradient of the pre-activation functions across layers, aiming
-        to enhance convergence stability and speed.
+                This optimizer extends the traditional optimization methods by incorporating Fisher Information to
+                adaptively adjust the learning rates based on the curvature of the loss landscape. It specifically
+                tracks the covariance of activation and gradient of the pre-activation functions across layers, aiming
+                to enhance convergence stability and speed.
 
-        The optimizer prepares the model for computing the Fisher Information Matrix by identifying relevant
-        layers and initializing necessary data structures for tracking the covariance of activations and
-        gradients. It then sets itself up by inheriting from a base optimizer class with the specified parameters.
+                The optimizer prepares the model for computing the Fisher Information Matrix by identifying relevant
+                layers and initializing necessary data structures for tracking the covariance of activations and
+                gradients. It then sets itself up by inheriting from a base optimizer class with the specified parameters.
         """
         if not 0.0 <= lr:
             raise ValueError(f"Invalid learning rate: {lr}")
@@ -102,22 +102,26 @@ class AdaFisherW(Optimizer):
         # store vectors for the pre-conditioner
         self.H_bar_D: Dict[Module, Tensor] = {}
         self.S_D: Dict[Module, Tensor] = {}
+        # Here we store the full Kronecker factors for analysis
+        self.H_bar: Dict[str, Tensor] = {}
+        self.S: Dict[str, Tensor] = {}
         # save the layers of the network where FIM can be computed
         self.modules: List[Module] = []
-        self.Compute_H_bar_D = Compute_H_bar_D()
-        self.Compute_S_D = Compute_S_D()
+        self.Compute_H_bar = Compute_H_bar()
+        self.Compute_S = Compute_S()
         self._prepare_model()
-        super(AdaFisherW, self).__init__(model.parameters(), defaults)
+        super(AdaFisher, self).__init__(model.parameters(), defaults)
+
 
     def _save_input(self, module: Module, input: Tensor, output: Tensor):
         """
-        Captures and updates the diagonal elements of the activation covariance matrix for a given
+        Captures and updates the diagonal and full matrix elements of the activation covariance matrix for a given
         module at specified intervals. This method is part of the AdaFisher optimizer's mechanism to
         incorporate curvature information from the model's activations into the optimization process.
 
-        Specifically, it computes the diagonal of the activation covariance matrix for the current
+        Specifically, it computes the diagonal and full matrix of the activation covariance matrix for the current
         input to the module. This computation is performed at intervals defined by the `TCov` attribute
-        of the optimizer. The method then updates a running average of these diagonal elements,
+        of the optimizer. The method then updates a running average of these matrices,
         maintaining this information as part of the optimizer's internal state. This updated state
         is later used to adjust the optimization strategy based on the geometry of the loss surface.
 
@@ -140,22 +144,24 @@ class AdaFisherW(Optimizer):
         curvature information and maintaining computational performance.
         """
         if is_grad_enabled() and self.steps % self.TCov == 0:
-            H_bar_D_i = self.Compute_H_bar_D(input[0].data, module)
+            H_bar_i, H_bar_D_i = self.Compute_H_bar(input[0].data, module)
             if self.steps == 0:
                 self.H_bar_D[module] = H_bar_D_i.new(H_bar_D_i.size(0)).fill_(1)
+                self.H_bar[module] = diag(H_bar_i.new(H_bar_i.size(0)).fill_(1))
             update_running_avg(MinMaxNormalization(H_bar_D_i), self.H_bar_D[module], self.gammas)
+            update_running_avg(MinMaxNormalization(H_bar_i), self.H_bar[module], self.gammas)
 
     def _save_grad_output(self, module: Module, grad_input: Tensor, grad_output: Tensor):
         """
-        Updates the optimizer's internal state by capturing and maintaining the diagonal elements
+        Updates the optimizer's internal state by capturing and maintaining the diagonal and full matrix elements
         of the gradient covariance matrix for a given module. This operation is conducted at
         intervals specified by the `TCov` attribute, focusing on the gradients of the output
         with respect to the module's parameters.
 
-        At each specified interval, this method computes the diagonal of the gradient covariance
+        At each specified interval, this method computes the diagonal and full matrix of the gradient covariance
         matrix based on the gradients of the module's output. This information is crucial for
         adapting the optimizer's behavior according to the curvature of the loss surface, as
-        reflected by the gradients' distribution. The computed diagonal elements are then used to
+        reflected by the gradients' distribution. The computed diagonal and full matrix elements are then used to
         update a running average stored in the optimizer's internal state, ensuring that the
         optimizer's adjustments are based on up-to-date curvature information.
 
@@ -177,10 +183,13 @@ class AdaFisherW(Optimizer):
         parameters, factoring in the curvature of the loss surface for more efficient optimization.
         """
         if self.steps % self.TCov == 0:
-            S_D_i = self.Compute_S_D(grad_output[0].data, module)
+            S_i, S_D_i = self.Compute_S(grad_output[0].data, module)
             if self.steps == 0:
                 self.S_D[module] = S_D_i.new(S_D_i.size(0)).fill_(1)
+                self.S[module] = diag(S_D_i.new(S_D_i.size(0)).fill_(1))
             update_running_avg(MinMaxNormalization(S_D_i), self.S_D[module], self.gammas)
+            update_running_avg(MinMaxNormalization(S_i), self.S[module], self.gammas)
+            
 
     def _prepare_model(self):
         """
@@ -197,8 +206,8 @@ class AdaFisherW(Optimizer):
 
         Note:
             - When defining the model to be optimized with AdaFisher, avoid using in-place operations
-              (e.g., `relu(inplace=True)` or '*=') within the modules. In-place operations can disrupt the proper
-              functioning of the forward and backward hooks, leading to incorrect computations or even runtime errors.
+              (e.g., `relu(inplace=True)` or '*=') within the modules. In-place operations can disrupt the proper functioning
+              of the forward and backward hooks, leading to incorrect computations or even runtime errors.
               This limitation arises because in-place operations modify the data directly, potentially
               bypassing or altering the data flow that the hooks rely on to capture activation and gradient
               information accurately.
@@ -255,6 +264,8 @@ class AdaFisherW(Optimizer):
         else:
             return F_tilde.reshape(module.weight.grad.data.size())
 
+         
+
     def _check_dim(self, param: List[Parameter], idx_module: int, idx_param: int) -> bool:
         """
         Checks if the dimensions of a given parameter match the dimensions of its corresponding module's weights or bias.
@@ -287,32 +298,35 @@ class AdaFisherW(Optimizer):
     @no_grad()
     def _step(self, hyperparameters: Dict[str, float], param: Parameter, F_tilde: Tensor):
         """
-        Performs a single optimization step for one parameter tensor, applying updates according
-        to the AdaFisher algorithm and hyperparameters provided.
+        Performs a single optimization step for one parameter tensor, applying updates calculated
+        from gradient and Fisher information.
 
-        This method integrates the curvature information into the update rule and utilizes a weight
-        decay approach similar to AdamW, directly applying the decay to the parameters before the
-        gradient update. This approach decouples weight decay from the optimization steps, allowing
-        for more direct control over regularization independently from the learning rate.
+        This method applies the AdaFisher optimization logic to update a given parameter based on its
+        gradient, the Fisher information, and the optimizer's current state. It computes an adapted
+        learning rate for the parameter by taking into account the curvature of the loss surface
+        (approximated by the Fisher information) and applies the F_tilde in a way that aims to
+        efficiently minimize the loss.
 
         Parameters:
-        - hyperparameters (dict): A dictionary containing optimization hyperparameters, including
-                                  'lr' for learning rate, 'beta' for the exponential moving average
-                                  coefficient, and 'eps' for numerical stability.
+        - hyperparameters (dict): A dictionary containing optimization hyperparameters such as
+                                  learning rate (`lr`), betas for the moving averages (`betas`),
+                                  and weight decay (`weight_decay`).
         - param (Parameter): The parameter tensor to be updated.
-        - F_tilde (Tensor): The pre-computed update based on the Fisher information and the gradient
-                           information of the parameter.
+        - F_tilde (Tensor): The F_tilde tensor computed based on the Fisher information for the
+                           parameter.
 
         Note:
-        The method initializes state for each parameter during the first call, storing the first
-        and second moment estimators as well as a step counter to adjust the bias correction terms.
-        The weight decay is applied in a manner similar to AdamW, affecting the parameter directly
-        before the gradient update, which improves regularization by decoupling it from the scale of
-        the gradients.
+        This method modifies the parameter tensor in-place. It initializes the optimizer's state
+        for the parameter if it has not been initialized yet. This state tracks the first and
+        second moment of the gradients and the Fisher information. The method then computes decayed
+        moving averages for these moments and uses them to adjust the update step. It accounts for
+        weight decay if specified in the hyperparameters.
 
-        The update rule incorporates curvature information through the 'F_tilde' tensor, which
-        influences the step size and direction based on the estimated Fisher Information Matrix,
-        providing a more informed update step that accounts for the loss surface's curvature.
+        The adaptation of the learning rate is based on the square root of the second moment (the
+        Fisher information) with bias correction applied, ensuring that the updates are scaled
+        appropriately as the optimization progresses. This method is decorated with `@no_grad()` to
+        ensure that these operations do not track gradients, which is essential for updating the
+        parameters without affecting the computational graph of the model's forward pass.
         """
         grad = param.grad
         state = self.state[param]
@@ -323,13 +337,16 @@ class AdaFisherW(Optimizer):
             state['exp_avg'] = zeros_like(
                 param, memory_format=preserve_format)
         exp_avg = state['exp_avg']
-        beta1 = hyperparameters['beta']
+        beta = hyperparameters['beta']
         state['step'] += 1
-        bias_correction1 = 1 - beta1 ** state['step']
+        bias_correction1 = 1 - beta ** state['step']
+        if hyperparameters['weight_decay'] != 0:
+            grad = grad.add(param, alpha=hyperparameters['weight_decay'])
         # Decay the first and second moment running average coefficient
-        exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-        param.data -= hyperparameters['lr'] * (exp_avg / bias_correction1 / F_tilde + hyperparameters['weight_decay'] * param.data)
-
+        exp_avg.mul_(beta).add_(grad, alpha=1 - beta)
+        step_size = hyperparameters['lr'] / bias_correction1
+        # Update Rule
+        param.addcdiv_(exp_avg, F_tilde, value=-step_size)
 
     @no_grad()
     def step(self, closure: Union[None, Callable[[], Tensor]] = None):
@@ -383,4 +400,9 @@ class AdaFisherW(Optimizer):
                 else:
                     self._step(hyperparameters, param[idx_param], F_tilde)
                     idx_param += 1
+        if self.steps % 50 == 0:
+            with open(f'H_bar_resnet/H_bar_{self.steps}.pkl', 'wb') as f:
+                pickle.dump(self.H_bar, f)
+            with open(f'S_resnet/S_{self.steps}.pkl', 'wb') as f:
+                pickle.dump(self.S, f)
         self.steps += 1

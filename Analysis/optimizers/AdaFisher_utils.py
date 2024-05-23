@@ -77,9 +77,9 @@ def _extract_patches(x: Tensor, kernel_size: Tuple[int], stride: Tuple[int], pad
     return x
 
 
-class Compute_H_bar_D:
+class Compute_H_bar:
     """
-    Computes the diagonal elements of the covariance matrix of activations ('H') for various layer types in a neural
+    Computes the diagonal and the full matrix elements of the covariance matrix of activations ('H') for various layer types in a neural
     network.
 
     This class is particularly useful in scenarios where only the variance of each activation is needed, rather than
@@ -88,9 +88,9 @@ class Compute_H_bar_D:
     """
 
     @classmethod
-    def compute_H_bar_D(cls, h, layer) -> Tensor:
+    def compute_H_bar(cls, h, layer) -> Tensor:
         """
-        Computes the diagonal of the covariance matrix for the activations of a given layer.
+        Computes the diagonal and the full matrix of the covariance matrix for the activations of a given layer.
 
         Parameters:
         - a (Tensor): The input activations to the layer. This tensor should have dimensions that match what the layer
@@ -98,14 +98,14 @@ class Compute_H_bar_D:
         - layer (Module): A PyTorch layer instance, such as Linear, Conv2d, BatchNorm2d, or LayerNorm.
 
         Returns:
-        - Tensor: A tensor containing the diagonal elements of the covariance matrix of the activations.
+        - Tensor: A tuple of tensors containing the diagonal and the full matrix elements of the covariance matrix of the activations.
         """
         return cls.__call__(h, layer)
 
     @classmethod
     def __call__(cls, h: Tensor, layer: Module) -> Tensor:
         """
-        Directly calls the instance to compute the diagonal of the covariance matrix by delegating to layer-specific
+        Directly calls the instance to compute the diagonal and the full matrix  of the covariance matrix by delegating to layer-specific
         methods.
 
         Parameters:
@@ -113,32 +113,32 @@ class Compute_H_bar_D:
         - layer (Module): The PyTorch layer instance, same as in `compute_H_bar_D`.
 
         Returns:
-        - Tensor: The diagonal of the covariance matrix of the activations.
+        - Tuple: Full matrix and diagonal of the covariance matrix of the activations.
         """
         if isinstance(layer, Linear):
-            H_bar_D = cls.linear(h, layer)
+            H_bar, H_bar_D = cls.linear(h, layer)
         elif isinstance(layer, Conv2d):
-            H_bar_D = cls.conv2d(h, layer)
+            H_bar, H_bar_D = cls.conv2d(h, layer)
         elif isinstance(layer, BatchNorm2d):
-            H_bar_D = cls.batchnorm2d(h, layer)
+            H_bar, H_bar_D = cls.batchnorm2d(h, layer)
         elif isinstance(layer, LayerNorm):
-            H_bar_D = cls.layernorm(h, layer)
+            H_bar, H_bar_D = cls.layernorm(h, layer)
         else:
             raise NotImplementedError
 
-        return H_bar_D
+        return H_bar, H_bar_D
 
     @staticmethod
     def conv2d(h: Tensor, layer: Conv2d) -> Tensor:
         """
-        Computes the diagonal of the covariance matrix for activations from a Conv2d layer.
+        Computes the diagonal and the full matrix of the covariance matrix for activations from a Conv2d layer.
 
         Parameters:
         - h (Tensor): Input activations with shape (batch_size, in_channels, height, width).
         - layer (Conv2d): The convolutional layer from `torch.nn`.
 
         Returns:
-        - Tensor: The diagonal of the covariance matrix of the activations.
+        - Tuple: Full matrix and diagonal of the covariance matrix of the activations.
         """
         batch_size = h.size(0)
         h = _extract_patches(h, layer.kernel_size, layer.stride, layer.padding)
@@ -146,66 +146,74 @@ class Compute_H_bar_D:
         h = h.reshape(-1, h.size(-1))
         if layer.bias is not None:
             h_bar = cat([h, h.new(h.size(0), 1).fill_(1)], 1)
-        return einsum('ij,ij->j', h_bar, h_bar) / (batch_size * spatial_size) if layer.bias is not None else einsum('ij,ij->j', h, h) / (batch_size * spatial_size)
+        H_bar = (h.t() @ h) / (batch_size * spatial_size)
+        H_bar_D = einsum('ij,ij->j', h_bar, h_bar) / (batch_size * spatial_size) if layer.bias is not None else  einsum('ij,ij->j', h, h) / (batch_size * spatial_size)
+        return H_bar, H_bar_D
 
     @staticmethod
     def linear(h: Tensor, layer: Linear) -> Tensor:
         """
-        Computes the diagonal of the covariance matrix for activations from a Linear layer.
+        Computes the diagonal and the full matrix of the covariance matrix for activations from a Linear layer.
 
         Parameters:
         - h (Tensor): Input activations, possibly flattened for fully connected layers.
         - layer (Linear): The linear layer from `torch.nn`.
 
         Returns:
-        - Tensor: The diagonal of the covariance matrix of the activations.
+        - Tuple: Full matrix and diagonal of the covariance matrix of the activations.
         """
         if len(h.shape) > 2:
             h = h.reshape(-1, h.shape[-1])
         batch_size = h.size(0)
         if layer.bias is not None:
             h_bar = cat([h, h.new(h.size(0), 1).fill_(1)], 1)
-        return einsum('ij,ij->j', h_bar, h_bar) / batch_size if layer.bias is not None else einsum('ij,ij->j', h, h)
+        H_bar = (h.t() @ h) / batch_size
+        H_bar_D = einsum('ij,ij->j', h_bar, h_bar) / batch_size if layer.bias is not None else  einsum('ij,ij->j', h, h) / batch_size
+        return H_bar, H_bar_D
 
     @staticmethod
     def batchnorm2d(h: Tensor, layer: BatchNorm2d) -> Tensor:
         """
-        Computes the diagonal of the covariance matrix for activations from a BatchNorm2d layer.
+        Computes the diagonal and the full matrix of the covariance matrix for activations from a BatchNorm2d layer.
 
         Parameters:
         - h (Tensor): Input activations with shape suitable for batch normalization.
         - layer (BatchNorm2d): The batch normalization layer from `torch.nn`.
 
         Returns:
-        - Tensor: The diagonal of the covariance matrix of the activations.
+        - Tuple: Full matrix and diagonal of the covariance matrix of the activations.
         """
         batch_size, spatial_size = h.size(0), h.size(2) * h.size(3)
         sum_h = sum(h, dim=(0, 2, 3)).unsqueeze(1) / (spatial_size ** 2)
-        h_bar = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1)
-        return einsum('ij,ij->j', h_bar, h_bar) / (batch_size ** 2)
+        sum_h = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1)
+        H_bar = (sum_h.t() @ sum_h) / (batch_size ** 2)
+        H_bar_D = einsum('ij,ij->j', sum_h, sum_h) / (batch_size ** 2)
+        return H_bar, H_bar_D
 
     @staticmethod
     def layernorm(h: Tensor, layer: LayerNorm) -> Tensor:
         """
-        Computes the diagonal of the covariance matrix for activations from a LayerNorm layer.
+        Computes the diagonal and the full matrix of the covariance matrix for activations from a LayerNorm layer.
 
         Parameters:
         - h (Tensor): Input activations, which can have any shape as layer normalization is flexible.
         - layer (LayerNorm): The layer normalization from `torch.nn`.
 
         Returns:
-        - Tensor: The diagonal of the covariance matrix of the activations.
+        - Tuple: Full matrix and diagonal of the covariance matrix of the activations.
         """
         dim_to_reduce = [d for d in range(h.ndim) if d != 1]
         batch_size, dim_norm = h.shape[0], prod([h.shape[dim] for dim in dim_to_reduce if dim != 0])
         sum_h = sum(h, dim=dim_to_reduce).unsqueeze(1) / (dim_norm ** 2)
-        h_bar = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1)
-        return einsum('ij,ij->j', h_bar, h_bar) / (batch_size ** 2)
+        sum_h = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1)
+        H_bar = (sum_h.t() @ sum_h) / (batch_size ** 2)
+        H_bar_D = einsum('ij,ij->j', sum_h, sum_h) / (batch_size ** 2)
+        return H_bar, H_bar_D
 
 
-class Compute_S_D:
+class Compute_S:
     """
-    Computes the diagonal elements of the gradient covariance matrix ('S') for various layer types in a neural network.
+    Computes the diagonal and the full matrix elements of the gradient covariance matrix ('S') for various layer types in a neural network.
 
     This class supports operations on gradients from Conv2d, Linear, BatchNorm2d, and LayerNorm layers, providing
     insights into the gradient distribution's variance across different parameters. Such computations are crucial
@@ -213,48 +221,48 @@ class Compute_S_D:
     """
 
     @classmethod
-    def compute_S_D(cls, s: Tensor, layer: Module) -> Tensor:
+    def compute_G(cls, s: Tensor, layer: Module) -> Tensor:
         """
-        Computes the diagonal of the gradient covariance matrix for the gradients of a given layer.
+        Computes the diagonal and the full matrix of the gradient covariance matrix for the gradients of a given layer.
 
         Parameters:
         - s (Tensor): The gradients of the layer's output with respect to some loss function.
         - layer (Module): A PyTorch layer instance (Conv2d, Linear, BatchNorm2d, LayerNorm).
 
         Returns:
-        - Tensor: A tensor containing the diagonal elements of the gradient covariance matrix.
+        - Tuple: Full matrix and diagonal of the gradient covariance matrix.
         """
         return cls.__call__(s, layer)
 
     @classmethod
     def __call__(cls, s: Tensor, layer: Module) -> Tensor:
         """
-        Directly calls the instance to compute the diagonal of the gradient covariance matrix by delegating to
+        Directly calls the instance to compute the diagonal and the full matrix of the gradient covariance matrix by delegating to
         layer-specific methods.
 
         Parameters:
-        - s (Tensor): Gradients, same as in `compute_S_D`.
-        - layer (Module): The PyTorch layer instance, same as in `compute_S_D`.
+        - s (Tensor): Gradients, same as in `compute_cov_g`.
+        - layer (Module): The PyTorch layer instance, same as in `compute_cov_g`.
 
         Returns:
-        - Tensor: The diagonal of the gradient covariance matrix.
+        - Tuple: Full matrix and diagonal of the gradient covariance matrix.
         """
         if isinstance(layer, Conv2d):
-            S_D = cls.conv2d(s, layer)
+            S, S_D = cls.conv2d(s, layer)
         elif isinstance(layer, Linear):
-            S_D = cls.linear(s, layer)
+            S, S_D = cls.linear(s, layer)
         elif isinstance(layer, BatchNorm2d):
-            S_D = cls.batchnorm2d(s, layer)
+            S, S_D = cls.batchnorm2d(s, layer)
         elif isinstance(layer, LayerNorm):
-            S_D = cls.layernorm(s, layer)
+            S, S_D = cls.layernorm(s, layer)
         else:
             raise NotImplementedError
-        return S_D
+        return S, S_D
 
     @staticmethod
     def conv2d(s: Tensor, layer: Conv2d) -> Tensor:
         """
-        Computes the diagonal of the gradient covariance matrix for a Conv2d layer.
+        Computes the diagonal and the full matrix of the gradient covariance matrix for a Conv2d layer.
 
         Parameters:
         - s (Tensor): Gradients of the Conv2d layer outputs with respect to the loss function, with shape
@@ -262,59 +270,66 @@ class Compute_S_D:
         - layer (Conv2d): The convolutional layer from `torch.nn`.
 
         Returns:
-        - Tensor: The diagonal of the gradient covariance matrix.
+        - Tuple: Full matrix and diagonal of the gradient covariance matrix.
         """
         batch_size = s.shape[0]
         spatial_size = s.size(2) * s.size(3)
         s = s.transpose(1, 2).transpose(2, 3)
         s = s.reshape(-1, s.size(-1))
-        return einsum('ij,ij->j', s, s) / (batch_size * spatial_size)
-
+        S = (s.t() @ s) / (batch_size * spatial_size)
+        S_bar = einsum('ij,ij->j', s, s) / (batch_size * spatial_size)
+        return S, S_bar
     @staticmethod
     def linear(s: Tensor, layer: Linear) -> Tensor:
         """
-        Computes the diagonal of the gradient covariance matrix for a Linear layer.
+        Computes the diagonal and the full matrix of the gradient covariance matrix for a Linear layer.
 
         Parameters:
         - s (Tensor): Gradients of the Linear layer outputs, possibly reshaped if originally multi-dimensional.
         - layer (Linear): The linear layer from `torch.nn`.
 
         Returns:
-        - Tensor: The diagonal of the gradient covariance matrix.
+        - Tuple: Full matrix and diagonal of the gradient covariance matrix.
         """
         if len(s.shape) > 2:
             s = s.reshape(-1, s.shape[-1])
         batch_size = s.size(0)
-        return einsum('ij,ij->j', s, s) / batch_size
+        S = (s.t() @ s) / batch_size
+        S_bar = einsum('ij,ij->j', s, s) / batch_size
+        return S, S_bar
 
     @staticmethod
     def batchnorm2d(s: Tensor, layer: BatchNorm2d) -> Tensor:
         """
-        Computes the diagonal of the gradient covariance matrix for a BatchNorm2d layer.
+        Computes the diagonal and the full matrix of the gradient covariance matrix for a BatchNorm2d layer.
 
         Parameters:
         - s (Tensor): Gradients of the BatchNorm2d layer outputs.
         - layer (BatchNorm2d): The batch normalization layer from `torch.nn`.
 
         Returns:
-        - Tensor: The diagonal of the gradient covariance matrix.
+        - Tuple: Full matrix and diagonal of the gradient covariance matrix.
         """
         batch_size = s.size(0)
         sum_s = sum(s, dim=(0, 2, 3))
-        return einsum('i,i->i', sum_s, sum_s) / batch_size
+        S = (sum_s @ sum_s.t()) / batch_size
+        S_bar = einsum('i,i->i', sum_s, sum_s) / batch_size
+        return S, S_bar
 
     @staticmethod
     def layernorm(s: Tensor, layer: LayerNorm) -> Tensor:
         """
-        Computes the diagonal of the gradient covariance matrix for a LayerNorm layer.
+        Computes the diagonal and the full matrix of the gradient covariance matrix for a LayerNorm layer.
 
         Parameters:
         - s (Tensor): Gradients of the LayerNorm layer outputs.
         - layer (LayerNorm): The layer normalization from `torch.nn`.
 
         Returns:
-        - Tensor: The diagonal of the gradient covariance matrix.
+        - Tuple: Full matrix and diagonal of the gradient covariance matrix.
         """
         batch_size = s.size(0)
         sum_s = sum(s, dim=tuple(range(s.ndim - 1)))
-        return einsum('i,i->i', sum_s, sum_s) / batch_size
+        S = (sum_s @ sum_s.t()) / batch_size
+        S_bar = einsum('i,i->i', sum_s, sum_s) / batch_size
+        return S, S_bar

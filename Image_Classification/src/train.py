@@ -18,7 +18,11 @@ from torch.distributed import init_process_group, destroy_process_group
 import numpy as np
 import torch
 import yaml
-import nvidia_smi
+try:
+    import nvidia_smi
+    MEM_TRACKING = True
+except ModuleNotFoundError:
+    MEM_TRACKING = False
 from optimizers import get_optimizer_scheduler
 from optimizers.AdaHessian import Adahessian
 from asdl.precondition import PreconditioningConfig, ShampooGradientMaker, KfacGradientMaker
@@ -196,6 +200,8 @@ class TrainingAgent:
             self.get_pretrained_model()
         if self.device == 'cpu':
             print("Resetting cpu-based network")
+        elif self.device == 'mps':
+            self.network = self.network.to(self.gpu)
         elif self.dist:
             self.network.to(self.gpu)
             self.network = nn.SyncBatchNorm.convert_sync_batchnorm(self.network)
@@ -317,10 +323,10 @@ class TrainingAgent:
         with open(os.path.join(self.output_filename, "tot_time.txt"), "a") as f:
             f.write(str(results['time'])) if epoch == 0 else \
                 f.write('\n' + str(results['time']))
-
-        with open(os.path.join(self.output_filename, "mem_used.txt"), "a") as f:
-            f.write(str(results['mem_used'])) if epoch == 0 else \
-                f.write('\n' + str(results['mem_used']))
+        if MEM_TRACKING:
+            with open(os.path.join(self.output_filename, "mem_used.txt"), "a") as f:
+                f.write(str(results['mem_used'])) if epoch == 0 else \
+                    f.write('\n' + str(results['mem_used']))
 
     @staticmethod
     def track_gpu_memory_usage():
@@ -343,7 +349,7 @@ class TrainingAgent:
             start_time = time.time()
             train_loss, (train_acc1, train_acc5) = self.epoch_iteration(
                 trial, epoch)
-            mem_used = self.track_gpu_memory_usage()
+            mem_used = self.track_gpu_memory_usage() if MEM_TRACKING else None
             test_loss, (test_acc1, test_acc5) = self.validate(epoch)
             end_time = time.time()
             tot_time_epoch = end_time - start_time
@@ -399,7 +405,7 @@ class TrainingAgent:
         top1 = AverageMeter()
         top5 = AverageMeter()
         for batch_idx, (inputs, targets) in enumerate(self.train_loader):
-            if self.device == "cuda":
+            if self.device in ["cuda", "mps"]:
                 inputs = inputs.to(self.gpu)
                 targets = targets.to(self.gpu)
 
@@ -441,7 +447,7 @@ class TrainingAgent:
         top5 = AverageMeter()
         with torch.no_grad():
             for batch_idx, (inputs, targets) in enumerate(self.test_loader):
-                if self.device == "cuda":
+                if self.device in ["cuda", "mps"]:
                     inputs = inputs.to(self.gpu)
                     targets = targets.to(self.gpu)
                 outputs = self.network(inputs)
@@ -527,13 +533,17 @@ def main(args: APNamespace):
         init_process_group(backend='nccl')
         main_worker(args)
         destroy_process_group()
-
     else:
         main_worker(args)
 
 
 def main_worker(args: APNamespace):
-    device = 'cuda' if torch.cuda.is_available() and not args.cpu else 'cpu'
+    if torch.cuda.is_available() and not args.cpu:
+        device = 'cuda'
+    elif torch.backends.mps.is_available():
+        device ='mps'
+    else:
+        device = 'cpu'
     training_agent = TrainingAgent(
         config_path=args.config_path,
         device=device,

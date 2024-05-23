@@ -1,48 +1,362 @@
-"""Implementation of AdaFisher"""
+"""Implementation of AdaFisher/AdaFisherW"""
 
 from typing import Callable, Dict, List, Union, Tuple, Type
 from torch import (Tensor, kron, is_grad_enabled, no_grad, zeros_like,
-                   preserve_format, ones_like)
+                   preserve_format, ones_like, cat, einsum, sum)
 from torch.optim import Optimizer
 from torch.nn import Module, Parameter
-from optimizers.AdaFisher_utils import (Compute_H_bar_D, Compute_S_D, update_running_avg, MinMaxNormalization)
+from torch.nn.functional import pad
+from math import prod
+from torch.nn import Module, Linear, Conv2d, BatchNorm2d, LayerNorm
 
-__all__ = ['AdaFisher']
+
+def MinMaxNormalization(tensor: Tensor, epsilon: float = 1e-12) -> Tensor:
+    min_tensor = tensor.min()
+    max_tensor = tensor.max()
+    range_tensor = max_tensor - min_tensor
+    return tensor.add_(-min_tensor).div_(range_tensor + epsilon)
 
 
-class AdaFisher(Optimizer):
-    """AdaFisher Optimizer: An adaptive learning rate optimizer that leverages Fisher Information for parameter updates.
+def update_running_avg(new: Tensor, current: Dict[Module, Tensor], gammas: list):
+    """
+    Update the running average of parameters with a new value using a specified beta3 coefficient.
 
-       The AdaFisher optimizer extends traditional optimization techniques by incorporating Fisher Information to
-       adaptively adjust the learning rates based on the curvature of the loss landscape. This approach aims to enhance
-       convergence stability and speed by scaling updates according to the inverse curvature of the parameter space,
-       making it particularly suited for deep learning models where the loss landscape can be highly non-convex.
+    This function is designed to update the running average of model parameters in a neural network training loop.
+    It utilizes a form of exponential moving average, adjusted by the beta3 coefficient, to blend the current parameter
+    values with new ones.
 
-       Key Features:
-           - Adaptive Learning Rates: Adjusts learning rates based on Fisher Information, potentially leading to faster
-           convergence by taking more informed steps.
-           - Curvature-aware Updates: Utilizes the curvature of the loss landscape to modulate the update steps, aiming
-           to improve optimization efficiency.
-           - Support for Custom Modules: Designed to work with a wide range of neural network architectures by allowing
-           flexible mappings between parameters and modules.
+    Parameters:
+    - new (Tensor): The new value(s) to be incorporated into the running average. This tensor should have the same
+    dimensions as the parameter values it's updating.
+    - current (Dict[Module, Tensor]): A dictionary mapping from PyTorch modules to their parameters that are to be
+    updated. The running average calculation is applied directly to these parameters.
+    - gammas (list): The coefficients used for exponential smoothing, controlling the rate at which the running average
+    forgets previous values. They must be between 0 and 1, where values closer to 1 make the average more stable over time.
 
-       Usage:
-       AdaFisher should be used similarly to other PyTorch optimizers, with the additional step of preparing the model
-       by registering necessary hooks to compute Fisher Information:
+    Returns:
+    - None: The function updates the `current` dictionary in-place, modifying the parameter values directly.
 
-       ```python
-       import torch
-       model = MyModel()
-       optimizer = AdaFisher(model, lr=1e-3, beta=0.9, gamma=[0.92, 0.008], Lambda=1e-3, weight_decay=0)
+    Note:
+    - This function modifies the `current` dictionary in-place, so it does not return anything.
+    Ensure that this behavior is intended in your use case.
+    """
+    current *= (1 - gammas[0])
+    current += new * gammas[1]
 
-       for input, target in dataset:
-           optimizer.zero_grad()
-           output = model(input)
-           loss = loss_fn(output, target)
-           loss.backward()
-           optimizer.step()
-       ```
-       """
+
+def _extract_patches(x: Tensor, kernel_size: Tuple[int], stride: Tuple[int], padding: Tuple[int]) -> Tensor:
+    """
+    Extract patches from input feature maps given a specified kernel size, stride, and padding.
+
+    This function applies a sliding window approach to input feature maps to extract patches according to the defined
+    kernel size, stride, and padding. It is useful for operations that require localized portions of the input, such
+    as convolutional layers in neural networks. The function handles padding by extending the input feature maps if
+    needed, then extracts overlapping or non-overlapping patches based on the stride and rearranges the output to a s
+    uitable format for further processing.
+
+    Parameters:
+    - x (Tensor): The input feature maps with dimensions (batch_size, in_channels, height, width).
+    - kernel_size (Tuple[int]): The height and width of the kernel (filter) as a tuple (kernel_height, kernel_width).
+    - stride (Tuple[int]): The stride of the convolution operation as a tuple (stride_height, stride_width). Determines
+    the step size for moving the kernel across the input.
+    - padding (Tuple[int]): The amount of padding added to the height and width of the input feature maps as a tuple
+    (padding_height, padding_width).
+
+    Returns:
+    - Tensor: The extracted patches with dimensions (batch_size, output_height, output_width,
+    in_channels * kernel_height * kernel_width), where `output_height` and `output_width` are computed based on the
+    input dimensions, kernel size, stride, and padding.
+
+    The function automatically adjusts the input feature maps with padding if specified, and then uses the unfold
+    operation to extract patches. The output is rearranged to ensure compatibility with downstream processes or layers.
+    """
+    if padding[0] + padding[1] > 0:
+        x = pad(x, (padding[1], padding[1], padding[0],
+                    padding[0])).data
+    x = x.unfold(dimension=2, size=kernel_size[0], step=stride[0])
+    x = x.unfold(dimension=3, size=kernel_size[1], step=stride[1])
+    x = x.transpose_(1, 2).transpose_(2, 3).contiguous()
+    x = x.view(
+        x.size(0), x.size(1), x.size(2),
+        x.size(3) * x.size(4) * x.size(5))
+    return x
+
+
+class Compute_H_bar_D:
+    """
+    Computes the diagonal elements of the covariance matrix of activations ('H') for various layer types in a neural
+    network.
+
+    This class is particularly useful in scenarios where only the variance of each activation is needed, rather than
+    the full covariance matrix. This can significantly reduce computational complexity and memory usage in large
+    networks or for specific applications like certain optimization algorithms or initialization strategies.
+    """
+
+    @classmethod
+    def compute_H_bar_D(cls, h, layer) -> Tensor:
+        """
+        Computes the diagonal of the covariance matrix for the activations of a given layer.
+
+        Parameters:
+        - a (Tensor): The input activations to the layer. This tensor should have dimensions that match what the layer
+        expects.
+        - layer (Module): A PyTorch layer instance, such as Linear, Conv2d, BatchNorm2d, or LayerNorm.
+
+        Returns:
+        - Tensor: A tensor containing the diagonal elements of the covariance matrix of the activations.
+        """
+        return cls.__call__(h, layer)
+
+    @classmethod
+    def __call__(cls, h: Tensor, layer: Module) -> Tensor:
+        """
+        Directly calls the instance to compute the diagonal of the covariance matrix by delegating to layer-specific
+        methods.
+
+        Parameters:
+        - h (Tensor): Input activations, same as in `compute_H_bar_D`.
+        - layer (Module): The PyTorch layer instance, same as in `compute_H_bar_D`.
+
+        Returns:
+        - Tensor: The diagonal of the covariance matrix of the activations.
+        """
+        if isinstance(layer, Linear):
+            H_bar_D = cls.linear(h, layer)
+        elif isinstance(layer, Conv2d):
+            H_bar_D = cls.conv2d(h, layer)
+        elif isinstance(layer, BatchNorm2d):
+            H_bar_D = cls.batchnorm2d(h, layer)
+        elif isinstance(layer, LayerNorm):
+            H_bar_D = cls.layernorm(h, layer)
+        else:
+            raise NotImplementedError
+
+        return H_bar_D
+
+    @staticmethod
+    def conv2d(h: Tensor, layer: Conv2d) -> Tensor:
+        """
+        Computes the diagonal of the covariance matrix for activations from a Conv2d layer.
+
+        Parameters:
+        - h (Tensor): Input activations with shape (batch_size, in_channels, height, width).
+        - layer (Conv2d): The convolutional layer from `torch.nn`.
+
+        Returns:
+        - Tensor: The diagonal of the covariance matrix of the activations.
+        """
+        batch_size = h.size(0)
+        h = _extract_patches(h, layer.kernel_size, layer.stride, layer.padding)
+        spatial_size = h.size(2) * h.size(3)
+        h = h.reshape(-1, h.size(-1))
+        if layer.bias is not None:
+            h_bar = cat([h, h.new(h.size(0), 1).fill_(1)], 1)
+        return einsum('ij,ij->j', h_bar, h_bar) / (batch_size * spatial_size) if layer.bias is not None else einsum('ij,ij->j', h, h) / (batch_size * spatial_size)
+
+    @staticmethod
+    def linear(h: Tensor, layer: Linear) -> Tensor:
+        """
+        Computes the diagonal of the covariance matrix for activations from a Linear layer.
+
+        Parameters:
+        - h (Tensor): Input activations, possibly flattened for fully connected layers.
+        - layer (Linear): The linear layer from `torch.nn`.
+
+        Returns:
+        - Tensor: The diagonal of the covariance matrix of the activations.
+        """
+        if len(h.shape) > 2:
+            h = h.reshape(-1, h.shape[-1])
+        batch_size = h.size(0)
+        if layer.bias is not None:
+            h_bar = cat([h, h.new(h.size(0), 1).fill_(1)], 1)
+        return einsum('ij,ij->j', h_bar, h_bar) / batch_size if layer.bias is not None else einsum('ij,ij->j', h, h)
+
+    @staticmethod
+    def batchnorm2d(h: Tensor, layer: BatchNorm2d) -> Tensor:
+        """
+        Computes the diagonal of the covariance matrix for activations from a BatchNorm2d layer.
+
+        Parameters:
+        - h (Tensor): Input activations with shape suitable for batch normalization.
+        - layer (BatchNorm2d): The batch normalization layer from `torch.nn`.
+
+        Returns:
+        - Tensor: The diagonal of the covariance matrix of the activations.
+        """
+        batch_size, spatial_size = h.size(0), h.size(2) * h.size(3)
+        sum_h = sum(h, dim=(0, 2, 3)).unsqueeze(1) / (spatial_size ** 2)
+        h_bar = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1)
+        return einsum('ij,ij->j', h_bar, h_bar) / (batch_size ** 2)
+
+    @staticmethod
+    def layernorm(h: Tensor, layer: LayerNorm) -> Tensor:
+        """
+        Computes the diagonal of the covariance matrix for activations from a LayerNorm layer.
+
+        Parameters:
+        - h (Tensor): Input activations, which can have any shape as layer normalization is flexible.
+        - layer (LayerNorm): The layer normalization from `torch.nn`.
+
+        Returns:
+        - Tensor: The diagonal of the covariance matrix of the activations.
+        """
+        dim_to_reduce = [d for d in range(h.ndim) if d != 1]
+        batch_size, dim_norm = h.shape[0], prod([h.shape[dim] for dim in dim_to_reduce if dim != 0])
+        sum_h = sum(h, dim=dim_to_reduce).unsqueeze(1) / (dim_norm ** 2)
+        h_bar = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1)
+        return einsum('ij,ij->j', h_bar, h_bar) / (batch_size ** 2)
+
+
+class Compute_S_D:
+    """
+    Computes the diagonal elements of the gradient covariance matrix ('S') for various layer types in a neural network.
+
+    This class supports operations on gradients from Conv2d, Linear, BatchNorm2d, and LayerNorm layers, providing
+    insights into the gradient distribution's variance across different parameters. Such computations are crucial
+    for gradient-based optimization and understanding model behavior during training.
+    """
+
+    @classmethod
+    def compute_S_D(cls, s: Tensor, layer: Module) -> Tensor:
+        """
+        Computes the diagonal of the gradient covariance matrix for the gradients of a given layer.
+
+        Parameters:
+        - s (Tensor): The gradients of the layer's output with respect to some loss function.
+        - layer (Module): A PyTorch layer instance (Conv2d, Linear, BatchNorm2d, LayerNorm).
+
+        Returns:
+        - Tensor: A tensor containing the diagonal elements of the gradient covariance matrix.
+        """
+        return cls.__call__(s, layer)
+
+    @classmethod
+    def __call__(cls, s: Tensor, layer: Module) -> Tensor:
+        """
+        Directly calls the instance to compute the diagonal of the gradient covariance matrix by delegating to
+        layer-specific methods.
+
+        Parameters:
+        - s (Tensor): Gradients, same as in `compute_S_D`.
+        - layer (Module): The PyTorch layer instance, same as in `compute_S_D`.
+
+        Returns:
+        - Tensor: The diagonal of the gradient covariance matrix.
+        """
+        if isinstance(layer, Conv2d):
+            S_D = cls.conv2d(s, layer)
+        elif isinstance(layer, Linear):
+            S_D = cls.linear(s, layer)
+        elif isinstance(layer, BatchNorm2d):
+            S_D = cls.batchnorm2d(s, layer)
+        elif isinstance(layer, LayerNorm):
+            S_D = cls.layernorm(s, layer)
+        else:
+            raise NotImplementedError
+        return S_D
+
+    @staticmethod
+    def conv2d(s: Tensor, layer: Conv2d) -> Tensor:
+        """
+        Computes the diagonal of the gradient covariance matrix for a Conv2d layer.
+
+        Parameters:
+        - s (Tensor): Gradients of the Conv2d layer outputs with respect to the loss function, with shape
+         (batch_size, n_filters, out_h, out_w).
+        - layer (Conv2d): The convolutional layer from `torch.nn`.
+
+        Returns:
+        - Tensor: The diagonal of the gradient covariance matrix.
+        """
+        batch_size = s.shape[0]
+        spatial_size = s.size(2) * s.size(3)
+        s = s.transpose(1, 2).transpose(2, 3)
+        s = s.reshape(-1, s.size(-1))
+        return einsum('ij,ij->j', s, s) / (batch_size * spatial_size)
+
+    @staticmethod
+    def linear(s: Tensor, layer: Linear) -> Tensor:
+        """
+        Computes the diagonal of the gradient covariance matrix for a Linear layer.
+
+        Parameters:
+        - s (Tensor): Gradients of the Linear layer outputs, possibly reshaped if originally multi-dimensional.
+        - layer (Linear): The linear layer from `torch.nn`.
+
+        Returns:
+        - Tensor: The diagonal of the gradient covariance matrix.
+        """
+        if len(s.shape) > 2:
+            s = s.reshape(-1, s.shape[-1])
+        batch_size = s.size(0)
+        return einsum('ij,ij->j', s, s) / batch_size
+
+    @staticmethod
+    def batchnorm2d(s: Tensor, layer: BatchNorm2d) -> Tensor:
+        """
+        Computes the diagonal of the gradient covariance matrix for a BatchNorm2d layer.
+
+        Parameters:
+        - s (Tensor): Gradients of the BatchNorm2d layer outputs.
+        - layer (BatchNorm2d): The batch normalization layer from `torch.nn`.
+
+        Returns:
+        - Tensor: The diagonal of the gradient covariance matrix.
+        """
+        batch_size = s.size(0)
+        sum_s = sum(s, dim=(0, 2, 3))
+        return einsum('i,i->i', sum_s, sum_s) / batch_size
+
+    @staticmethod
+    def layernorm(s: Tensor, layer: LayerNorm) -> Tensor:
+        """
+        Computes the diagonal of the gradient covariance matrix for a LayerNorm layer.
+
+        Parameters:
+        - s (Tensor): Gradients of the LayerNorm layer outputs.
+        - layer (LayerNorm): The layer normalization from `torch.nn`.
+
+        Returns:
+        - Tensor: The diagonal of the gradient covariance matrix.
+        """
+        batch_size = s.size(0)
+        sum_s = sum(s, dim=tuple(range(s.ndim - 1)))
+        return einsum('i,i->i', sum_s, sum_s) / batch_size
+
+
+class AdaFisherBackBone(Optimizer):
+    """
+    The AdaFisherBackBone class serves as the base class for optimizers that adjust model parameters 
+    based on the Fisher Information Matrix to more efficiently navigate the curvature of the loss landscape. 
+    This class is designed to work with neural network models and supports specific module types 
+    for which Fisher Information can be effectively computed.
+
+    The class initializes with model-related parameters and configurations for the optimizer, 
+    including learning rate adjustments and regularization techniques based on the second-order 
+    information. It integrates advanced techniques such as dynamic preconditioning with the Fisher 
+    Information to stabilize and speed up the convergence of the training process.
+
+    Attributes:
+        SUPPORTED_MODULES (Tuple[Type[str], ...]): A tuple listing the types of model modules (layers) 
+        supported by this optimizer. Typical supported types include "Linear", "Conv2d", 
+        "BatchNorm2d", and "LayerNorm".
+
+    Args:
+        model (Module): The neural network model to optimize.
+        lr (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
+        beta (float, optional): The beta parameter for the optimizer, used in calculations 
+                                like those in momentum. Defaults to 0.9.
+        Lambda (float, optional): Regularization parameter. Defaults to 1e-3.
+        gammas (List[float], optional): A list containing gamma parameters used in the 
+                                        running average computations. Defaults to [0.92, 0.008].
+        TCov (int, optional): Interval in steps for recalculating the covariance matrices. Defaults to 100.
+        weight_decay (float, optional): Weight decay coefficient to help prevent overfitting. Defaults to 0.
+
+    Raises:
+        ValueError: If any of the parameters are out of their expected ranges.
+    """ 
+    
     SUPPORTED_MODULES: Tuple[Type[str], ...] = ("Linear", "Conv2d", "BatchNorm2d", "LayerNorm")
 
     def __init__(self,
@@ -50,36 +364,10 @@ class AdaFisher(Optimizer):
                  lr: float = 1e-3,
                  beta: float = 0.9,
                  Lambda: float = 1e-3,
-                 gammas: list = [0.92, 0.008],
+                 gammas: List = [0.92, 0.008],
                  TCov: int = 100,
                  weight_decay: float = 0
                  ):
-        """Initializes the AdaFisher optimizer.
-
-                Parameters:
-                - model (Module): The neural network model to optimize.
-                - lr (float, optional): Learning rate. Default is 1e-3.
-                - beta (float, optional): The beta1 parameter in the optimizer, controlling the moving average of
-                gradients. Default is 0.9.
-                - gammas (list, optional): The gammas parameter in the optimizer, controlling the moving average of
-                kronecker factors H and S. Default is [0.92, 0.008].
-                - Lambda (float, optional): Tikhonov Damping term added to the Fisher Information Matrix (FIM)
-                to stabilize inversion. Default is 1e-3.
-                - TCov (int, optional): Time interval for updating the covariance matrices. Default is 100.
-                - weight_decay (float, optional): Weight decay coefficient. Default is 0.
-
-                Raises:
-                - ValueError: If any of the provided parameters are out of their expected ranges.
-
-                This optimizer extends the traditional optimization methods by incorporating Fisher Information to
-                adaptively adjust the learning rates based on the curvature of the loss landscape. It specifically
-                tracks the covariance of activation and gradient of the pre-activation functions across layers, aiming
-                to enhance convergence stability and speed.
-
-                The optimizer prepares the model for computing the Fisher Information Matrix by identifying relevant
-                layers and initializing necessary data structures for tracking the covariance of activations and
-                gradients. It then sets itself up by inheriting from a base optimizer class with the specified parameters.
-        """
         if not 0.0 <= lr:
             raise ValueError(f"Invalid learning rate: {lr}")
         if not 0.0 <= beta < 1.0:
@@ -107,7 +395,7 @@ class AdaFisher(Optimizer):
         self.Compute_H_bar_D = Compute_H_bar_D()
         self.Compute_S_D = Compute_S_D()
         self._prepare_model()
-        super(AdaFisher, self).__init__(model.parameters(), defaults)
+        super(AdaFisherBackBone, self).__init__(model.parameters(), defaults)
 
     def _save_input(self, module: Module, input: Tensor, output: Tensor):
         """
@@ -284,6 +572,57 @@ class AdaFisher(Optimizer):
             else:
                 return True
 
+
+class AdaFisher(AdaFisherBackBone):
+    """AdaFisher Optimizer: An adaptive learning rate optimizer that leverages Fisher Information for parameter updates.
+
+       This class AdaFisher optimizer extends traditional optimization techniques by incorporating Fisher Information to
+       adaptively adjust the learning rates based on the curvature of the loss landscape. This approach aims to enhance
+       convergence stability and speed by scaling updates according to the inverse curvature of the parameter space,
+       making it particularly suited for deep learning models where the loss landscape can be highly non-convex.
+
+       Key Features:
+           - Adaptive Learning Rates: Adjusts learning rates based on Fisher Information, potentially leading to faster
+           convergence by taking more informed steps.
+           - Curvature-aware Updates: Utilizes the curvature of the loss landscape to modulate the update steps, aiming
+           to improve optimization efficiency.
+           - Support for Custom Modules: Designed to work with a wide range of neural network architectures by allowing
+           flexible mappings between parameters and modules.
+
+       Usage:
+       AdaFisher should be used similarly to other PyTorch optimizers, with the additional step of preparing the model
+       by registering necessary hooks to compute Fisher Information:
+
+       ```python
+       import torch
+       model = MyModel()
+       optimizer = AdaFisher(model, lr=1e-3, beta=0.9, gamma=[0.92, 0.008], Lambda=1e-3, weight_decay=0)
+
+       for input, target in dataset:
+           optimizer.zero_grad()
+           output = model(input)
+           loss = loss_fn(output, target)
+           loss.backward()
+           optimizer.step()
+       ```
+       """
+    def __init__(self, 
+                 model: Module,
+                 lr: float = 1e-3,
+                 beta: float = 0.9,
+                 Lambda: float = 1e-3,
+                 gammas: List = [0.92, 0.008],
+                 TCov: int = 100,
+                 weight_decay: float = 0
+                ):
+        super(AdaFisher, self).__init__(model,
+                                        lr = lr,
+                                        beta = beta,
+                                        Lambda = Lambda,
+                                        gammas = gammas,
+                                        TCov = TCov,
+                                        weight_decay = weight_decay)
+        
     @no_grad()
     def _step(self, hyperparameters: Dict[str, float], param: Parameter, F_tilde: Tensor):
         """
@@ -336,6 +675,158 @@ class AdaFisher(Optimizer):
         step_size = hyperparameters['lr'] / bias_correction1
         # Update Rule
         param.addcdiv_(exp_avg, F_tilde, value=-step_size)
+
+    @no_grad()
+    def step(self, closure: Union[None, Callable[[], Tensor]] = None):
+        """
+        Performs a single optimization step across all parameter groups of the model.
+        This method iterates over each parameter group, updating parameters based on their gradients, a set of
+        hyperparameters, and update tensors calculated for each corresponding module. The update process carefully
+        tracks the relationship between parameters and their corresponding modules, using index tracking and dimension
+        checks to ensure updates are applied accurately.
+
+        Arguments:
+            - closure (callable, optional): A closure that reevaluates the model and returns the loss. Currently,
+            the use of closure is not supported, and attempting to provide one will raise a NotImplementedError.
+
+        The update process involves:
+            1. Iterating through each parameter group and its corresponding hyperparameters.
+            2. For each parameter, checking if a gradient is available. If not, it skips to the next parameter.
+            3. Using index tracking to associate parameters with their corresponding modules, considering cases
+            where parameters do not have gradients or are part of buffer counts.
+            4. Performing a dimensionality check to ensure compatibility between the parameter and module,
+            then calculating the update curvature tensor.
+            5. Applying the update curvature using a custom step function that incorporates the calculated update
+            tensor and hyperparameters.
+        """
+        if closure is not None:
+            raise NotImplementedError("Closure not supported.")
+        for group in self.param_groups:
+            idx_param, idx_module, buffer_count = 0, 0, 0
+            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'], "beta": group['beta'], "lr": group['lr']}
+            for _ in range(len(self.modules)):
+                if param[idx_param].grad is None:
+                    idx_param += 1
+                    if param[idx_param].ndim > 1:
+                        idx_module += 1
+                    else:
+                        buffer_count += 1
+                    if buffer_count == 2:
+                        idx_module += 1
+                        buffer_count = 0
+                    continue
+                m = self.modules[idx_module]
+                if self._check_dim(param, idx_module, idx_param):
+                    F_tilde = self._get_F_tilde(m)
+                    idx_module += 1
+                else:
+                    F_tilde = ones_like(param[idx_param])
+                if isinstance(F_tilde, list):
+                    for F_tilde_i in F_tilde:
+                        self._step(hyperparameters, param[idx_param], F_tilde_i)
+                        idx_param += 1
+                else:
+                    self._step(hyperparameters, param[idx_param], F_tilde)
+                    idx_param += 1
+        self.steps += 1
+
+
+class AdaFisherW(AdaFisherBackBone):
+    """AdaFisherW Optimizer: An adaptive learning rate optimizer that leverages Fisher Information for parameter updates.
+
+   The AdaFisherW optimizer extends traditional optimization techniques by incorporating Fisher Information to
+   adaptively adjust the learning rates based on the curvature of the loss landscape. This approach aims to enhance
+   convergence stability and speed by scaling updates according to the inverse curvature of the parameter space,
+   making it particularly suited for deep learning models where the loss landscape can be highly non-convex.
+
+   Key Features:
+       - Adaptive Learning Rates: Adjusts learning rates based on Fisher Information, potentially leading to faster
+       convergence by taking more informed steps.
+       - Curvature-aware Updates: Utilizes the curvature of the loss landscape to modulate the update steps, aiming
+       to improve optimization efficiency.
+       - Support for Custom Modules: Designed to work with a wide range of neural network architectures by allowing
+       flexible mappings between parameters and modules.
+
+   Usage:
+   AdaFisherW should be used similarly to other PyTorch optimizers, with the additional step of preparing the model
+   by registering necessary hooks to compute Fisher Information:
+
+   ```python
+   import torch
+   model = MyModel()
+   optimizer = AdaFisherW(model, lr=1e-3, beta=0.9, gamma=[0.98, 0.008], Lambda=1e-3, weight_decay=0)
+
+   for input, target in dataset:
+       optimizer.zero_grad()
+       output = model(input)
+       loss = loss_fn(output, target)
+       loss.backward()
+       optimizer.step()
+   ```
+    """
+    def __init__(self, 
+                 model: Module,
+                 lr: float = 1e-3,
+                 beta: float = 0.9,
+                 Lambda: float = 1e-3,
+                 gammas: List = [0.92, 0.008],
+                 TCov: int = 100,
+                 weight_decay: float = 0
+                ):
+        super(AdaFisherW, self).__init__(model,
+                                        lr = lr,
+                                        beta = beta,
+                                        Lambda = Lambda,
+                                        gammas = gammas,
+                                        TCov = TCov,
+                                        weight_decay = weight_decay)
+    
+    @no_grad()
+    def _step(self, hyperparameters: Dict[str, float], param: Parameter, F_tilde: Tensor):
+        """
+        Performs a single optimization step for one parameter tensor, applying updates according
+        to the AdaFisher algorithm and hyperparameters provided.
+
+        This method integrates the curvature information into the update rule and utilizes a weight
+        decay approach similar to AdamW, directly applying the decay to the parameters before the
+        gradient update. This approach decouples weight decay from the optimization steps, allowing
+        for more direct control over regularization independently from the learning rate.
+
+        Parameters:
+        - hyperparameters (dict): A dictionary containing optimization hyperparameters, including
+                                  'lr' for learning rate, 'beta' for the exponential moving average
+                                  coefficient, and 'eps' for numerical stability.
+        - param (Parameter): The parameter tensor to be updated.
+        - F_tilde (Tensor): The pre-computed update based on the Fisher information and the gradient
+                           information of the parameter.
+
+        Note:
+        The method initializes state for each parameter during the first call, storing the first
+        and second moment estimators as well as a step counter to adjust the bias correction terms.
+        The weight decay is applied in a manner similar to AdamW, affecting the parameter directly
+        before the gradient update, which improves regularization by decoupling it from the scale of
+        the gradients.
+
+        The update rule incorporates curvature information through the 'F_tilde' tensor, which
+        influences the step size and direction based on the estimated Fisher Information Matrix,
+        providing a more informed update step that accounts for the loss surface's curvature.
+        """
+        grad = param.grad
+        state = self.state[param]
+        # State initialization
+        if len(state) == 0:
+            state['step'] = 0
+            # Exponential moving average of gradient values
+            state['exp_avg'] = zeros_like(
+                param, memory_format=preserve_format)
+        exp_avg = state['exp_avg']
+        beta1 = hyperparameters['beta']
+        state['step'] += 1
+        bias_correction1 = 1 - beta1 ** state['step']
+        # Decay the first and second moment running average coefficient
+        exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+        param.data -= hyperparameters['lr'] * (exp_avg / bias_correction1 / F_tilde + hyperparameters['weight_decay'] * param.data)
+
 
     @no_grad()
     def step(self, closure: Union[None, Callable[[], Tensor]] = None):

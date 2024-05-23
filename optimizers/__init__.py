@@ -2,8 +2,7 @@ from typing import Any, List
 from optimizers.Adam import Adam
 from optimizers.AdamW import AdamW
 from optimizers.AdaHessian import Adahessian
-from optimizers.AdaFisher import AdaFisher
-from optimizers.AdaFisherW import AdaFisherW
+from optimizers.AdaFisher import AdaFisher, AdaFisherW
 from optimizers.sgd import SGD
 from optimizers.lr_scheduler import StepLR, CosineAnnealingWarmRestarts, CosineAnnealingLR, OneCycleLR, MultiStepLR, LinearLR
 import torch

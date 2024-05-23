@@ -16,13 +16,9 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from optimizers.AdamW import AdamW
-from optimizers.AdaFisherW import AdaFisherW
+from optimizers.AdaFisher import AdaFisherW
 from optimizers.AdaHessian import Adahessian
 from optimizers.sgd import SGD
-EMBEDDINGS_URL = (
-    "https://www.dropbox.com/s/g91502hubcmb4ob/embeddings.npz?dl=0"
-)
-
 
 def train(epoch, model, dataloader, optimizer, args, gm = None):
     model.train()

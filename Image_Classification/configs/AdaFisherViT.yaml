@@ -11,7 +11,7 @@ early_stop_threshold: -1 #  set to -1 if you wish not to use early stop,
 optimizer_kwargs:  # named-kwargs to pass to optimizer.
   weight_decay: 0.01
   beta: 0.9
-  gamma: [0.92, 0.008]
+  gammas: [0.92, 0.008]
   Lambda: 1e-3
 scheduler_kwargs: # named-kwargs to pass to scheduler.
   T_max: 200

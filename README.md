@@ -90,6 +90,12 @@ For training ResNet50 on ImageNet using a single GPU, we have prepared a set of 
 
 This section of the repository focuses on training various optimizers using the WikiText-2 dataset with a compact GPT-1 network.
 
+### Dataset Download
+
+The dataset for this project is hosted on Google Drive. You can download it using the following link:
+
+[Download Dataset](https://drive.google.com/file/d/1Yl-AuSZe15MLes3iA4o4Ryz9zbmcapfC/view?usp=share_link)
+
 #### 🎯 Usage
 
 To replicate our experimental results accurately, we provide a series of executable bash scripts in the [Language_Model](Language_Model) directory. These scripts are pre-configured with all necessary settings to facilitate straightforward experimentation. 

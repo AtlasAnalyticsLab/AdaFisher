@@ -1,14 +1,9 @@
 # AdaFisher: Adaptive Second Order Optimization via Fisher Information
 
-🚀 Official PyTorch implementation of the paper-related **AdaFisher** optimizer code. 
+Abstract, _First-order optimization methods are currently the mainstream in training deep neural networks (DNNs). Optimizers like Adam incorporate limited curvature information by employing the diagonal matrix preconditioning of the stochastic gradient during the training. Despite their widespread, second-order optimization algorithms exhibit superior convergence properties compared to their first-order counterparts e.g. Adam and SGD. However, their practicality in training DNNs are still limited due to increased per-iteration computations and suboptimal accuracy compared to the first order methods. We present AdaFisher--an adaptive second-order optimizer that leverages a block-diagonal approximation to the Fisher information matrix for adaptive gradient preconditioning. AdaFisher aims to bridge the gap between enhanced convergence capabilities and computational efficiency in second-order optimization framework for training DNNs. Despite the slow pace of second-order optimizers, we showcase that AdaFisher can be reliably adopted for image classification, language modelling and stand out for its stability and robustness in hyperparameter tuning. We demonstrate that AdaFisher outperforms the SOTA optimizers in terms of both accuracy and convergence speed._ 
 <center>
     <img src="imgs/AdaFisher.png" alt="Overview of Project" width="800" height="280"/>
 </center>
-
-
-## 🌟 Introduction
-
-We introduce **AdaFisher**, a novel second-order optimization algorithm that leverages the Fisher Information Matrix (FIM) to enhance the gradient descent method. Integrating the curvature information provided by the FIM with the Adam/AdamW framework, AdaFisher achieves fast computation speeds—comparable to Adam—while outperforming existing SOTA optimizers in terms of performance and generalization across various experimental setups. Currently, AdaFisher is optimized for image classification tasks using Convolutional Neural Networks (CNNs) and Vision Transformers (ViTs) and Language Modelling. We also explore the structure of the Kronecker Factors, where their energy is mainly concentrated along the diagonal, in order to improve the time and space complexity of AdaFisher.
 
 ## 📁 Repository Contents
 This project is organized into four main folders, each dedicated to a specific aspect of our research and development efforts.
@@ -84,7 +79,7 @@ python train.py --config config.yaml --pretrained 1
 This allows the several optimizers to leverage previously learned weights, potentially improving convergence speed and final model accuracy for complex image classification tasks.
 
 #### ☄️ Training ImageNet with a Single GPU
-For training ResNet50 on ImageNet using a single GPU, we have prepared a set of bash scripts tailored to each optimizer. These scripts are conveniently located in the [Image_Classification/ImageNet](ImageNet) directory. Each script is pre-configured with the optimal settings for training, ensuring that you can start your training sessions efficiently and effectively.
+For training ResNet50 on ImageNet using a single GPU, we have prepared a set of bash scripts tailored to each optimizer. These scripts are conveniently located in the [ImageNet](Image_Classification/ImageNet) directory. Each script is pre-configured with the optimal settings for training, ensuring that you can start your training sessions efficiently and effectively.
 
 ### 📖 Language Modeling 
 
@@ -92,9 +87,7 @@ This section of the repository focuses on training various optimizers using the 
 
 ### Dataset Download
 
-The dataset for this project is hosted on Google Drive. You can download it using the following link:
-
-[Download Dataset](https://drive.google.com/file/d/1Yl-AuSZe15MLes3iA4o4Ryz9zbmcapfC/view?usp=share_link)
+The dataset for this project is hosted on Google Drive. You can download it using the following link: [Download Dataset](https://drive.google.com/file/d/1Yl-AuSZe15MLes3iA4o4Ryz9zbmcapfC/view?usp=share_link)
 
 #### 🎯 Usage
 

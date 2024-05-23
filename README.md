@@ -134,7 +134,7 @@ With a Python version of 3.9 or later.
 #### Using Conda
 First, create a new Conda environment with Python:
 ```bash
-conda create --n AdaFisher myenv python
+conda create --n AdaFisher python
 ```
 Activate the environment:
 ```bash

@@ -11,11 +11,11 @@ early_stop_threshold: -1 #  set to -1 if you wish not to use early stop,
 optimizer_kwargs:  # named-kwargs to pass to optimizer.
   weight_decay: 5e-4
   gammas: [0.92, 0.008]
-  Lambda: 1e-3
+  Lambda: 1e-1
 scheduler_kwargs: # named-kwargs to pass to scheduler.
   T_max: 200
 aug: True
-cutout: False
+cutout: True
 n_holes: 1
 cutout_length: 16
 

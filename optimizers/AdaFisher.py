@@ -559,18 +559,9 @@ class AdaFisherBackBone(Optimizer):
             False otherwise.
         """
         params = param[idx_param]
-        module_weight = self.modules[idx_module].weight
-        module_bias = self.modules[idx_module].bias
-        if module_bias is not None:
-            if params.data.size() != module_weight.data.size() and params.data.size() != module_bias.data.size():
-                return False
-            else:
-                return True
-        else:
-            if params.data.size() != module_weight.data.size():
-                return False
-            else:
-                return True
+        module = self.modules[idx_module]
+        param_size = params.data.size()
+        return param_size == module.weight.data.size() or (module.bias is not None and param_size == module.bias.data.size())
 
 
 class AdaFisher(AdaFisherBackBone):

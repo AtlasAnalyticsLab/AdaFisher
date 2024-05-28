@@ -19,7 +19,7 @@ optimizer_kwargs:  # named-kwargs to pass to optimizer.
 scheduler_kwargs: # named-kwargs to pass to scheduler.
   T_max: 107
 aug: True
-cutout: False
+cutout: True
 n_holes: 1
 cutout_length: 16
 

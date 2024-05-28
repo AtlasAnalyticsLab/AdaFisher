@@ -1,6 +1,8 @@
 # AdaFisher: Adaptive Second Order Optimization via Fisher Information
 
 Abstract, _First-order optimization methods are currently the mainstream in training deep neural networks (DNNs). Optimizers like Adam incorporate limited curvature information by employing the diagonal matrix preconditioning of the stochastic gradient during the training. Despite their widespread, second-order optimization algorithms exhibit superior convergence properties compared to their first-order counterparts e.g. Adam and SGD. However, their practicality in training DNNs are still limited due to increased per-iteration computations and suboptimal accuracy compared to the first order methods. We present AdaFisher--an adaptive second-order optimizer that leverages a block-diagonal approximation to the Fisher information matrix for adaptive gradient preconditioning. AdaFisher aims to bridge the gap between enhanced convergence capabilities and computational efficiency in second-order optimization framework for training DNNs. Despite the slow pace of second-order optimizers, we showcase that AdaFisher can be reliably adopted for image classification, language modelling and stand out for its stability and robustness in hyperparameter tuning. We demonstrate that AdaFisher outperforms the SOTA optimizers in terms of both accuracy and convergence speed._ 
+
+[[arXiv]](https://arxiv.org/abs/2405.16397) | [[Citation]](#citation)
 <center>
     <img src="imgs/AdaFisher.png" alt="Overview of Project" width="800" height="280"/>
 </center>
@@ -142,3 +144,18 @@ conda install -n gg ipykernel --update-deps --force-reinstall
 ## License 📜
 
 This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html) - see the [LICENSE](LICENSE) file for details.
+
+## Citation 📄
+
+If you find this repository useful, please consider giving a star and citation (arxiv preprint):
+
+```bibtex
+@misc{gomes2024adafisher,
+      title={AdaFisher: Adaptive Second Order Optimization via Fisher Information}, 
+      author={Damien Martins Gomes and Yanlei Zhang and Eugene Belilovsky and Guy Wolf and Mahdi S. Hosseini},
+      year={2024},
+      eprint={2405.16397},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+}
+```

@@ -62,7 +62,7 @@ python train.py --help
 ##### 🔗 Integrating AdaFisher/AdaFisherW as an Optimizer
 AdaFisher and AdaFisherW can be seamlessly integrated into your training pipeline like any standard optimizer. Here’s how to set it up with your model:
 ```python
-from AdaFisher import AdaFisher # from AdaFisherW import AdaFisherW
+from AdaFisher import AdaFisher, AdaFisherW 
 ...
 optimizer = AdaFisher(network, ...) # AdaFisherW(network, ...) 
 ...
@@ -71,7 +71,20 @@ for input in data_loader:
     output = network(input)
     optimizer.step()
 ```
-**Important**: When initializing AdaFisher, pass the entire network object to the optimizer, not just its parameters. This ensures that the optimizer has full context of the model architecture, which is essential for leveraging the Fisher Information effectively.
+**Important**: When initializing AdaFisher, pass the entire network object to the optimizer, not just its parameters. This ensures that the optimizer has full context of the model architecture, which is essential for leveraging the Fisher Information effectively. Please ensure to avoid using in-place operations in the model. For instance:
+
+```python
+# Instead of using in-place addition:
+out = layer1
+out = out + layer5  # Correct way
+# Avoid this:
+# out += layer5
+
+# Instead of using in-place ReLU:
+relu = ReLU(inplace=False)  # Correct way
+# Avoid this:
+# relu = ReLU(inplace=True)
+```
 
 #### 🌎 Training with Pretrained Weights
 To train using pretrained weights, utilize the following command:
@@ -87,7 +100,7 @@ For training ResNet50 on ImageNet using a single GPU, we have prepared a set of 
 
 This section of the repository focuses on training various optimizers using the WikiText-2 dataset with a compact GPT-1 network.
 
-### Dataset Download
+#### Dataset Download
 
 The dataset for this project is hosted on Google Drive. You can download it using the following link: [Download Dataset](https://drive.google.com/file/d/1Yl-AuSZe15MLes3iA4o4Ryz9zbmcapfC/view?usp=share_link)
 
@@ -100,19 +113,7 @@ For detailed information on all available command-line options, execute the foll
 ```console
 python train.py --help
 ```
-##### 🔗 Integrating AdaFisher/AdaFisherW as an Optimizer
-AdaFisher and AdaFisherW can be seamlessly integrated into your training pipeline like any standard optimizer. Here’s how to set it up with your model:
-```python
-from AdaFisher import AdaFisher # from AdaFisherW import AdaFisherW
-...
-optimizer = AdaFisher(network, ...) # AdaFisherW(network, ...) 
-...
-for input in data_loader:
-    optimizer.zero_grad()
-    output = network(input)
-    optimizer.step()
-```
-**Important**: When initializing AdaFisher, pass the entire network object to the optimizer, not just its parameters. This ensures that the optimizer has full context of the model architecture, which is essential for leveraging the Fisher Information effectively.
+
 ## 🌟 Getting Started 
 
 ### Prerequisites

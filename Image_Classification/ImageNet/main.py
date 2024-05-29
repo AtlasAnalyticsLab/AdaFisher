@@ -12,7 +12,8 @@ from optimizers.AdaFisher import AdaFisher
 from optimizers.Adam import Adam
 from optimizers.sgd import SGD
 import torch.backends.cudnn as cudnn
-from ..src.models.resnet import resnet50
+from models.resnet import resnet50
+from models.swin import swin_t, swin_s, swin_b, swin_l
 from datetime import datetime
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from pathlib import Path
@@ -22,7 +23,7 @@ from asdl.precondition import PreconditioningConfig, ShampooGradientMaker, KfacG
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--data', metavar='DIR', help='path to dataset')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='alexnet')
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50')
 parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='numer of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -59,6 +60,14 @@ def main():
     print("=> creating model '{}'".format(args.arch))
     if args.arch == 'resnet50':
         model = resnet50(num_classes=1000)
+    elif args.arch == 'swin_t':
+        model = swin_t(num_classes=1000)
+    elif args.arch == 'swin_s':
+        model = swin_s(num_classes=1000)
+    elif args.arch == 'swin_b':
+        model = swin_b(num_classes=1000)
+    elif args.arch == 'swin_l':
+        model = swin_l(num_classes=1000)
     else:
         raise NotImplementedError
 

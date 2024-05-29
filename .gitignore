@@ -1,5 +1,6 @@
 # Big file
 data
+logs
 wandb
 checkpoint
 .DS_Store

@@ -21,6 +21,7 @@ cutout_length: 16
 
 ###### Suggested Default ######
 n_trials: 1
+precision: fp32 # Not working with fp16 precision
 num_workers: 5
 max_epochs: 89
 mini_batch_size: 256

@@ -17,6 +17,7 @@ import torch.backends.cudnn as cudnn
 from torch.distributed import init_process_group, destroy_process_group
 import numpy as np
 import torch
+from torch.cuda.amp import GradScaler, autocast
 import yaml
 try:
     import nvidia_smi
@@ -75,7 +76,6 @@ def args(sub_parser: _SubParsersAction):
         '--pretrained',action='store_true',
         dest='pretrained',
         help="Pretrained weights for (Resnet50, Resnet101, DenseNet121, MobileNetV3): Default = False")
-    sub_parser.set_defaults(pretrained=False)
 
 class TrainingAgent:
     config: Dict[str, Any] = None
@@ -188,6 +188,9 @@ class TrainingAgent:
                 
     def reset(self, learning_rate: float) -> None:
         self.network = get_network(name=self.config['network'], num_classes=self.num_classes)
+        for layer in self.network.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.float()
         if self.pretrained:
             self.get_pretrained_model()
         if self.device == 'cpu':
@@ -390,6 +393,8 @@ class TrainingAgent:
         losses = AverageMeter()
         top1 = AverageMeter()
         top5 = AverageMeter()
+        precision = torch.float16 if self.config['precision'] == 'fp16' else torch.float32
+        scaler = GradScaler(enabled=True)
         # switch to train mode
         self.network.train()
         for i, (input, target) in enumerate(self.train_loader):
@@ -406,13 +411,15 @@ class TrainingAgent:
                                                self.config['optimizer_kwargs']['clipping_norm'])
                 self.optimizer.step()
             else:
-                output = self.network(input)
-                loss = self.criterion(output, target)
+                with torch.autocast(device_type=self.gpu, dtype=precision, enabled=True):
+                    output = self.network(input)
+                    loss = self.criterion(output, target)
                 if isinstance(self.optimizer, Adahessian):
-                    loss.backward(create_graph=True)
+                    scaler.scale(loss).backward(create_graph=True)
                 else:
-                    loss.backward()
-                self.optimizer.step()
+                    scaler.scale(loss).backward()
+                scaler.step(self.optimizer)
+                scaler.update()
 
             prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
             losses.update(loss.item(), input.size(0))

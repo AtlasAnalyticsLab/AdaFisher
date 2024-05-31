@@ -85,6 +85,8 @@ def parse_config(
     else:
         if config['init_lr'] != 'auto':
             raise ValueError(e)
+    if config['precision'] not in ['fp16', 'fp32']:
+        raise ValueError("'precision' must be either 'fp16' or 'fp32")
     config['max_epochs'] = smart_string_to_int(
         config['max_epochs'],
         e='config.yaml: max_epochs must be an int')

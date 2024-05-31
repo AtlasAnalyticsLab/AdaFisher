@@ -2,7 +2,7 @@
 
 from typing import Callable, Dict, List, Union, Tuple, Type
 from torch import (Tensor, kron, is_grad_enabled, no_grad, zeros_like,
-                   preserve_format, ones_like, cat, einsum, sum)
+                   preserve_format, ones_like, cat, einsum, sum, inf)
 from torch.optim import Optimizer
 from torch.nn import Module, Parameter
 from torch.nn.functional import pad
@@ -10,7 +10,38 @@ from math import prod
 from torch.nn import Module, Linear, Conv2d, BatchNorm2d, LayerNorm
 
 
-def MinMaxNormalization(tensor: Tensor, epsilon: float = 1e-12) -> Tensor:
+def smart_detect_inf(tensor: Tensor) -> Tensor:
+    """
+    Replaces positive infinity in the tensor with 1. and negative infinity with 0..
+    
+    Parameters:
+    tensor (torch.Tensor): Input tensor that can have any dimension.
+    
+    Returns:
+    torch.Tensor: A tensor with the same shape, dtype, and device as the input, where
+                  positive infinities are replaced by 1. and negative infinities by 0..
+    """
+    result_tensor = tensor.clone()
+    result_tensor[tensor == inf] = 1.
+    result_tensor[tensor == -inf] = 0.
+    return result_tensor
+
+
+def MinMaxNormalization(tensor: Tensor, epsilon: float = 1e-6) -> Tensor:
+    """
+    Normalizes a tensor using the Min-Max scaling technique with an option to adjust for infinities.
+    This scaling shrinks the range of the feature data to be between 0 and 1. An epsilon is added
+    to the denominator for numerical stability to avoid division by zero.
+
+    Parameters:
+    tensor (torch.Tensor): The input tensor to normalize, which can have any shape.
+    epsilon (float, optional): A small value added to the denominator to prevent division by zero. 
+                               Defaults to 1e-12.
+
+    Returns:
+    torch.Tensor: A tensor of the same shape as the input, with all elements scaled to the range [0, 1].
+    """
+    tensor = smart_detect_inf(tensor)
     min_tensor = tensor.min()
     max_tensor = tensor.max()
     range_tensor = max_tensor - min_tensor

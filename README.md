@@ -89,12 +89,9 @@ relu = ReLU(inplace=False)  # Correct way
 #### 🌎 Training with Pretrained Weights
 To train using pretrained weights, utilize the following command:
 ```console
-python train.py --config config.yaml --pretrained 1
+python train.py --config config.yaml --pretrained
 ```
 This allows the several optimizers to leverage previously learned weights, potentially improving convergence speed and final model accuracy for complex image classification tasks.
-
-#### ☄️ Training ImageNet with a Single GPU
-For training ResNet50 on ImageNet using a single GPU, we have prepared a set of bash scripts tailored to each optimizer. These scripts are conveniently located in the [ImageNet](Image_Classification/ImageNet) directory. Each script is pre-configured with the optimal settings for training, ensuring that you can start your training sessions efficiently and effectively. Note that this ImageNet folder is a modified version of [ImageNet](https://github.com/jiweibo/ImageNet).
 
 ### 📖 Language Modeling 
 

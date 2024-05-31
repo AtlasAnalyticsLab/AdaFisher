@@ -6,8 +6,6 @@ import torchvision
 import numpy as np
 import torch
 
-from utils.datasets import TinyImageNet
-
 
 class Cutout(object):
     """Randomly mask out one or more patches from an image.
@@ -64,6 +62,7 @@ def get_data(
         length: int = -1,
         aug: bool = True,
         dist: bool = False) -> None:
+    
     if name == 'CIFAR10':
         num_classes = 10
         if aug:
@@ -110,6 +109,7 @@ def get_data(
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
             num_workers=num_workers, sampler=test_sampler, pin_memory=True)
+        
     elif name == 'CIFAR100':
         num_classes = 100
         if aug:
@@ -158,6 +158,7 @@ def get_data(
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
             num_workers=num_workers, sampler=test_sampler, pin_memory=True)
+        
     elif name == 'ImageNet':
         num_classes = 1000
         transform_train = transforms.Compose([
@@ -197,6 +198,7 @@ def get_data(
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
             num_workers=num_workers, pin_memory=True)
+        
     elif name == 'TinyImageNet':
         num_classes = 200
         transform_train = transforms.Compose([
@@ -218,8 +220,8 @@ def get_data(
                 0.229, 0.224, 0.225]),
         ])
 
-        trainset = TinyImageNet(
-            root=str(root), split='train', download=False,
+        trainset = torchvision.datasets.ImageFolder(
+            root=str(root / 'train'), 
             transform=transform_train)
         train_sampler = \
             torch.utils.data.distributed.DistributedSampler(
@@ -229,13 +231,14 @@ def get_data(
             shuffle=(train_sampler is None),
             num_workers=num_workers,
             pin_memory=True, sampler=train_sampler)
-        testset = TinyImageNet(
-            root=str(root), split='val', download=False,
+        testset = torchvision.datasets.ImageFolder(
+            root=str(root / 'val'), 
             transform=transform_test)
         test_sampler = \
             torch.utils.data.distributed.DistributedSampler(
                 testset) if dist else None
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
-            num_workers=num_workers, sampler=test_sampler, pin_memory=True)
+            num_workers=num_workers, pin_memory=True)
+        
     return train_loader, test_loader, num_classes

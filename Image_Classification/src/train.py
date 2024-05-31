@@ -55,10 +55,6 @@ def args(sub_parser: _SubParsersAction):
         default=None, type=str,
         help="Set checkpoint resume path: Default = None")
     sub_parser.add_argument(
-        '--pretrained',
-        default=0, type=int,
-        help="Pretrained weights for (Resnet50, Resnet101, DenseNet121, MobileNetV3): Default = False")
-    sub_parser.add_argument(
         '--save-freq', default=25, type=int,
         help='Checkpoint epoch save frequency: Default = 25')
     sub_parser.add_argument(
@@ -66,20 +62,20 @@ def args(sub_parser: _SubParsersAction):
         default='./../', type=str,
         help="Set root path of project that parents all others: Default = './../'")
     sub_parser.add_argument(
-        '--clip', default=False, type=bool,
-        help='Gardient clipping enable: Default = False')
-    sub_parser.add_argument(
-        '--clip_norm', default=1, type=int,
-        help='Gradient clipping norm Default = 1')
-    sub_parser.add_argument(
         '--cpu', action='store_true',
         dest='cpu',
         help="Flag: CPU bound training: Default = False")
     sub_parser.set_defaults(cpu=False)
     sub_parser.add_argument(
-        '--dist', default=False, type=bool,
-        help='Distributed training: Default = False')
-
+        '--dist', action='store_true',
+        dest='dist',
+        help="Distributed training: Default = False")
+    sub_parser.set_defaults(dist=False)
+    sub_parser.add_argument(
+        '--pretrained',action='store_true',
+        dest='pretrained',
+        help="Pretrained weights for (Resnet50, Resnet101, DenseNet121, MobileNetV3): Default = False")
+    sub_parser.set_defaults(pretrained=False)
 
 class TrainingAgent:
     config: Dict[str, Any] = None
@@ -104,8 +100,6 @@ class TrainingAgent:
             resume: Path = None,
             save_freq: int = 25,
             dist: bool = False,
-            clip: bool = False,
-            clip_norm: int = 1,
             pretrained: bool = False) -> None:
 
         self.dist = dist
@@ -117,8 +111,6 @@ class TrainingAgent:
         self.start_epoch = 0
         self.start_trial = 0
         self.device = device
-        self.clip = clip
-        self.clip_norm = clip_norm
         self.data_path = data_path
         self.output_path = output_path
         self.checkpoint_path = checkpoint_path
@@ -196,7 +188,7 @@ class TrainingAgent:
                 
     def reset(self, learning_rate: float) -> None:
         self.network = get_network(name=self.config['network'], num_classes=self.num_classes)
-        if self.pretrained == 1:
+        if self.pretrained:
             self.get_pretrained_model()
         if self.device == 'cpu':
             print("Resetting cpu-based network")
@@ -297,32 +289,28 @@ class TrainingAgent:
             self.run_epochs(trial, epochs)
 
     def on_time_results(self, results: dict, epoch: int) -> None:
+
         if epoch == 0:
             with open(os.path.join(self.output_filename, "config.json"), "w") as f:
                 json.dump(self.config, f, indent=2)
 
-        # Log train, val, and test losses and perplexities
-        with open(os.path.join(self.output_filename, "train_loss.txt"), "a") as f:
-            f.write(str(results['train_loss'])) if epoch == 0 else \
-                f.write('\n' + str(results['train_loss']))
-        with open(os.path.join(self.output_filename, "train_accuracy1.txt"), "a") as f:
-            f.write(str(results['train_acc1'])) if epoch == 0 else \
-                f.write('\n' + str(results['train_acc1']))
-        with open(os.path.join(self.output_filename, "train_accuracy5.txt"), "a") as f:
-            f.write(str(results['train_acc5'])) if epoch == 0 else \
-                f.write('\n' + str(results['train_acc5']))
-        with open(os.path.join(self.output_filename, "test_loss.txt"), "a") as f:
-            f.write(str(results['test_loss'])) if epoch == 0 else \
-                f.write('\n' + str(results['test_loss']))
-        with open(os.path.join(self.output_filename, "test_accuracy1.txt"), "a") as f:
-            f.write(str(results['test_acc1'])) if epoch == 0 else \
-                f.write('\n' + str(results['test_acc1']))
-        with open(os.path.join(self.output_filename, "test_accuracy5.txt"), "a") as f:
-            f.write(str(results['test_acc5'])) if epoch == 0 else \
-                f.write('\n' + str(results['test_acc5']))
-        with open(os.path.join(self.output_filename, "tot_time.txt"), "a") as f:
-            f.write(str(results['time'])) if epoch == 0 else \
-                f.write('\n' + str(results['time']))
+        files_to_keys = {
+            "train_loss.txt": 'train_loss',
+            "train_accuracy1.txt": 'train_acc1',
+            "train_accuracy5.txt": 'train_acc5',
+            "test_loss.txt": 'test_loss',
+            "test_accuracy1.txt": 'test_acc1',
+            "test_accuracy5.txt": 'test_acc5',
+            "tot_time.txt": 'time'
+        }
+        for filename, key in files_to_keys.items():
+            mode = 'w' if epoch == 0 else 'a'
+            with open(os.path.join(self.output_filename, filename), mode) as f:
+                separator = '' if epoch == 0 else '\n'
+                f.write(f"{separator}{results[key]}")
+        if epoch == 0:
+            with open(os.path.join(self.output_filename, "config.json"), "w") as f:
+                json.dump(self.config, f, indent=2)
         if MEM_TRACKING:
             with open(os.path.join(self.output_filename, "mem_used.txt"), "a") as f:
                 f.write(str(results['mem_used'])) if epoch == 0 else \
@@ -347,10 +335,9 @@ class TrainingAgent:
     def run_epochs(self, trial: int, epochs: List[int]) -> None:
         for epoch in epochs:
             start_time = time.time()
-            train_loss, (train_acc1, train_acc5) = self.epoch_iteration(
-                trial, epoch)
+            train_loss, train_acc1, train_acc5 = self.epoch_iteration(epoch)
             mem_used = self.track_gpu_memory_usage() if MEM_TRACKING else None
-            test_loss, (test_acc1, test_acc5) = self.validate(epoch)
+            test_loss, test_acc1, test_acc5 = self.validate()
             end_time = time.time()
             tot_time_epoch = end_time - start_time
             results = {"train_loss": train_loss, "train_acc1": train_acc1, "train_acc5": train_acc5,
@@ -372,10 +359,10 @@ class TrainingAgent:
                     (total_time - start_time) * (epochs[-1] - epoch)),
                 "Train Loss: {:.4f}% | Train Acc. {:.4f}% | ".format(
                     train_loss,
-                    train_acc1 * 100) +
+                    train_acc1) +
                 "Test Loss: {:.4f}% | Test Acc. {:.4f}%".format(
                     test_loss,
-                    test_acc1 * 100))
+                    test_acc1))
 
             if self.early_stop(train_loss):
                 print("Info: Early stop activated.")
@@ -393,76 +380,71 @@ class TrainingAgent:
                 if epoch % self.save_freq == 0:
                     filename = f'trial_{trial}_epoch_{epoch}.pth.tar'
                     torch.save(data, str(self.checkpoint_path / filename))
-                if np.greater(test_acc1, self.best_acc1):
+                if torch.greater(test_acc1, self.best_acc1):
                     self.best_acc1 = test_acc1
                     torch.save(
                         data, str(self.checkpoint_path / 'best.pth.tar'))
                 torch.save(data, str(self.checkpoint_path / 'last.pth.tar'))
 
-    def epoch_iteration(self, trial: int, epoch: int):
-        self.network.train()
-        train_loss = 0
+    def epoch_iteration(self, epoch: int):
+        losses = AverageMeter()
         top1 = AverageMeter()
         top5 = AverageMeter()
-        for batch_idx, (inputs, targets) in enumerate(self.train_loader):
-            if self.device in ["cuda", "mps"]:
-                inputs = inputs.to(self.gpu)
-                targets = targets.to(self.gpu)
-
+        # switch to train mode
+        self.network.train()
+        for i, (input, target) in enumerate(self.train_loader):
+            target = target.to(self.gpu)
+            input = input.to(self.gpu)
             if isinstance(self.scheduler, CosineAnnealingWarmRestarts):
-                self.scheduler.step(epoch + batch_idx / len(self.train_loader))
+                self.scheduler.step(epoch + i / len(self.train_loader))
             self.optimizer.zero_grad()
             if self.config['optimizer'] in ["Shampoo", "kfac"]:
-                dummy_y = self.gm.setup_model_call(self.network, inputs)
-                self.gm.setup_loss_call(self.criterion, dummy_y, targets)
-                outputs, loss = self.gm.forward_and_backward()
+                dummy_y = self.gm.setup_model_call(self.network, input)
+                self.gm.setup_loss_call(self.criterion, dummy_y, target)
+                output, loss = self.gm.forward_and_backward()
                 torch.nn.utils.clip_grad_norm_(self.network.parameters(),
                                                self.config['optimizer_kwargs']['clipping_norm'])
                 self.optimizer.step()
             else:
-                outputs = self.network(inputs)
-                loss = self.criterion(outputs, targets)
+                output = self.network(input)
+                loss = self.criterion(output, target)
                 if isinstance(self.optimizer, Adahessian):
                     loss.backward(create_graph=True)
                 else:
                     loss.backward()
-                if self.clip:
-                    torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.clip_norm)
                 self.optimizer.step()
-            train_loss += loss.item()
-            acc1, acc5 = accuracy(
-                outputs, targets, (1, min(self.num_classes, 5)))
-            top1.update(acc1[0], inputs.size(0))
-            top5.update(acc5[0], inputs.size(0))
+
+            prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec1[0], input.size(0))
+            top5.update(prec5[0], input.size(0)) 
             if isinstance(self.scheduler, OneCycleLR):
                 self.scheduler.step()
+        return losses.avg, top1.avg, top5.avg
 
-        return train_loss / (batch_idx + 1), (top1.avg.cpu().item() / 100.,
-                                              top5.avg.cpu().item() / 100.)
-
-    def validate(self, epoch: int):
-        self.network.eval()
-        test_loss = 0
+    def validate(self):
+        losses = AverageMeter()
         top1 = AverageMeter()
         top5 = AverageMeter()
-        with torch.no_grad():
-            for batch_idx, (inputs, targets) in enumerate(self.test_loader):
-                if self.device in ["cuda", "mps"]:
-                    inputs = inputs.to(self.gpu)
-                    targets = targets.to(self.gpu)
-                outputs = self.network(inputs)
-                loss = self.criterion(outputs, targets)
-                test_loss += loss.item()
-                acc1, acc5 = accuracy(outputs, targets, topk=(
-                    1, min(self.num_classes, 5)))
-                top1.update(acc1[0], inputs.size(0))
-                top5.update(acc5[0], inputs.size(0))
+        # switch to evaluate mode
+        self.network.eval()
+        for i, (input, target) in enumerate(self.test_loader):
+            target = target.to(self.gpu)
+            input = input.to(self.gpu)
+            with torch.no_grad():
+                # compute output
+                output = self.network(input)
+                loss = self.criterion(output, target)
 
-        return test_loss / (batch_idx + 1), (top1.avg.cpu().item() / 100,
-                                             top5.avg.cpu().item() / 100)
+            # measure accuracy and record loss
+            prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec1[0], input.size(0))
+            top5.update(prec5[0], input.size(0))
+        return losses.avg, top1.avg, top5.avg
 
 
-class AverageMeter:
+class AverageMeter(object):
     """Computes and stores the average and current value"""
 
     def __init__(self):
@@ -481,21 +463,19 @@ class AverageMeter:
         self.avg = self.sum / self.count
 
 
-def accuracy(outputs, targets, topk=(1,)):
-    with torch.no_grad():
-        maxk = max(topk)
-        batch_size = targets.size(0)
+def accuracy(output, target, topk=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    maxk = max(topk)
+    batch_size = target.size(0)
+    _, pred = output.topk(maxk, 1, largest=True, sorted=True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
 
-        _, pred = outputs.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(targets.contiguous().view(1, -1).expand_as(pred))
-
-        res = []
-        for k in topk:
-            correct_k = correct[:k].contiguous(
-            ).view(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
-        return res
+    res = []
+    for k in topk:
+        correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+        res.append(correct_k.mul_(100.0 / batch_size))
+    return res
 
 
 def setup_dirs(args: APNamespace) -> Tuple[Path, Path, Path, Path]:
@@ -553,8 +533,6 @@ def main_worker(args: APNamespace):
         save_freq=args.save_freq,
         checkpoint_path=args.checkpoint_path,
         dist=args.dist,
-        clip=args.clip,
-        clip_norm=args.clip_norm,
         pretrained=args.pretrained)
     print(f"Info: Pytorch device is set to {training_agent.device}")
     training_agent.train()

@@ -1,5 +1,5 @@
 ###### Application Specific ######
-dataset: 'CIFAR10' # options: CIFAR100, CIFAR10, TinyImageNet
+dataset: 'CIFAR10' # options: CIFAR100, CIFAR10, TinyImageNet, ImageNet
 network: 'swin_t' # options: see model_choices.txt
 optimizer: 'Shampoo'
 scheduler: 'CosineAnnealingLR' # options: see scheduler_choices.txt

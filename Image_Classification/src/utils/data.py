@@ -103,12 +103,9 @@ def get_data(
         testset = torchvision.datasets.CIFAR10(
             root=str(root), train=False,
             download=True, transform=transform_test)
-        test_sampler = \
-            torch.utils.data.distributed.DistributedSampler(
-                testset) if dist else None
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
-            num_workers=num_workers, sampler=test_sampler, pin_memory=True)
+            num_workers=num_workers, pin_memory=True)
         
     elif name == 'CIFAR100':
         num_classes = 100
@@ -152,12 +149,9 @@ def get_data(
         testset = torchvision.datasets.CIFAR100(
             root=str(root), train=False,
             download=True, transform=transform_test)
-        test_sampler = \
-            torch.utils.data.distributed.DistributedSampler(
-                testset) if dist else None
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
-            num_workers=num_workers, sampler=test_sampler, pin_memory=True)
+            num_workers=num_workers, pin_memory=True)
         
     elif name == 'ImageNet':
         num_classes = 1000
@@ -234,9 +228,6 @@ def get_data(
         testset = torchvision.datasets.ImageFolder(
             root=str(root / 'val'), 
             transform=transform_test)
-        test_sampler = \
-            torch.utils.data.distributed.DistributedSampler(
-                testset) if dist else None
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
             num_workers=num_workers, pin_memory=True)

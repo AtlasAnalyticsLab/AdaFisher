@@ -17,7 +17,7 @@ import torch.backends.cudnn as cudnn
 from torch.distributed import init_process_group, destroy_process_group
 import numpy as np
 import torch
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
 import yaml
 try:
     import nvidia_smi
@@ -81,7 +81,6 @@ class TrainingAgent:
     config: Dict[str, Any] = None
     train_loader = None
     test_loader = None
-    train_sampler = None
     num_classes: int = None
     network: torch.nn.Module = None
     optimizer: torch.optim.Optimizer = None

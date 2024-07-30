@@ -1,13 +1,17 @@
 from models.resnet import (resnet18, resnet34, resnet50, resnet101, resnet152)
-from models.resnet_cifar import (ResNet18 as resnet18_cifar, ResNet34 as resnet34_cifar, ResNet50 as resnet50_cifar, ResNet101 as resnet101_cifar, ResNet152 as resnet152_cifar)
+from models.resnet_cifar import (ResNet18 as resnet18_cifar, ResNet34 as resnet34_cifar, ResNet50
+as resnet50_cifar, ResNet101 as resnet101_cifar, ResNet152 as resnet152_cifar)
 from models.densenet import (densenet121, densenet161, densenet169, densenet201)
-from models.densenet_cifar import (DenseNet121 as densenet121_cifar, DenseNet161 as densenet161_cifar,DenseNet169 as densenet169_cifar, DenseNet201 as densenet201_cifar)
+from models.densenet_cifar import (DenseNet121 as densenet121_cifar, DenseNet161 as densenet161_cifar,DenseNet169
+as densenet169_cifar, DenseNet201 as densenet201_cifar)
 from models.swin import (swin_t, swin_s, swin_b, swin_l)
 from models.cct import cct
 from models.focalnet import FocalNet
 from models.mobilenetv3 import mobilenetv3
+from torch.nn import Module
 
-def get_network(name: str, num_classes: int, **kwargs) -> None:
+
+def get_network(name: str, num_classes: int, **kwargs) -> Module | None:
     return \
         resnet18(
             num_classes=num_classes) if name == 'resnet18' else\

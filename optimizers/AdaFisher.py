@@ -48,7 +48,7 @@ def MinMaxNormalization(tensor: Tensor, epsilon: float = 1e-6) -> Tensor:
     return tensor.add_(-min_tensor).div_(range_tensor + epsilon)
 
 
-def update_running_avg(new: Tensor, current: Dict[Module, Tensor], gammas: list):
+def update_running_avg(new: Tensor, current: Tensor, gammas: list):
     """
     Update the running average of parameters with a new value using a specified beta3 coefficient.
 
@@ -57,10 +57,10 @@ def update_running_avg(new: Tensor, current: Dict[Module, Tensor], gammas: list)
     values with new ones.
 
     Parameters:
-    - new (Tensor): The new value(s) to be incorporated into the running average. This tensor should have the same
+    - new (Tensor): The new values to be incorporated into the running average. This tensor should have the same
     dimensions as the parameter values it's updating.
-    - current (Dict[Module, Tensor]): A dictionary mapping from PyTorch modules to their parameters that are to be
-    updated. The running average calculation is applied directly to these parameters.
+    - current Tensor: The previous values that are to be updated. The running average calculation is applied directly
+    to these parameters.
     - gammas (list): The coefficients used for exponential smoothing, controlling the rate at which the running average
     forgets previous values. They must be between 0 and 1, where values closer to 1 make the average more stable over time.
 
@@ -75,15 +75,19 @@ def update_running_avg(new: Tensor, current: Dict[Module, Tensor], gammas: list)
     current += new * gammas[1]
 
 
-def _extract_patches(x: Tensor, kernel_size: Tuple[int], stride: Tuple[int], padding: Tuple[int]) -> Tensor:
+def _extract_patches(x: Tensor, kernel_size: Tuple[int],
+                     stride: Tuple[int],
+                     padding: Tuple[int],
+                     groups: int) -> Tensor:
+
     """
-    Extract patches from input feature maps given a specified kernel size, stride, and padding.
+    Extract patches from input feature maps given a specified kernel size, stride, padding, and groups.
 
     This function applies a sliding window approach to input feature maps to extract patches according to the defined
-    kernel size, stride, and padding. It is useful for operations that require localized portions of the input, such
-    as convolutional layers in neural networks. The function handles padding by extending the input feature maps if
-    needed, then extracts overlapping or non-overlapping patches based on the stride and rearranges the output to a s
-    uitable format for further processing.
+    kernel size, stride, and padding, while respecting the groups parameter. It is useful for operations that require
+    localized portions of the input, such as convolutional layers in neural networks. The function handles padding by
+    extending the input feature maps if needed, then extracts overlapping or non-overlapping patches based on the
+    stride and rearranges the output to a suitable format for further processing.
 
     Parameters:
     - x (Tensor): The input feature maps with dimensions (batch_size, in_channels, height, width).
@@ -92,6 +96,7 @@ def _extract_patches(x: Tensor, kernel_size: Tuple[int], stride: Tuple[int], pad
     the step size for moving the kernel across the input.
     - padding (Tuple[int]): The amount of padding added to the height and width of the input feature maps as a tuple
     (padding_height, padding_width).
+    - groups (int): The number of groups for grouped convolution.
 
     Returns:
     - Tensor: The extracted patches with dimensions (batch_size, output_height, output_width,
@@ -101,15 +106,16 @@ def _extract_patches(x: Tensor, kernel_size: Tuple[int], stride: Tuple[int], pad
     The function automatically adjusts the input feature maps with padding if specified, and then uses the unfold
     operation to extract patches. The output is rearranged to ensure compatibility with downstream processes or layers.
     """
+
     if padding[0] + padding[1] > 0:
-        x = pad(x, (padding[1], padding[1], padding[0],
-                    padding[0])).data
-    x = x.unfold(dimension=2, size=kernel_size[0], step=stride[0])
-    x = x.unfold(dimension=3, size=kernel_size[1], step=stride[1])
-    x = x.transpose_(1, 2).transpose_(2, 3).contiguous()
-    x = x.view(
-        x.size(0), x.size(1), x.size(2),
-        x.size(3) * x.size(4) * x.size(5))
+        x = pad(x, (padding[1], padding[1], padding[0], padding[0]))
+    batch_size, in_channels, height, width = x.size()
+    x = x.view(batch_size, groups, in_channels // groups, height, width)
+    x = x.unfold(3, kernel_size[0], stride[0])
+    x = x.unfold(4, kernel_size[1], stride[1])
+    x = x.permute(0, 1, 3, 4, 2, 5, 6).contiguous()
+    x = x.view(batch_size, groups, -1, in_channels // groups * kernel_size[0] * kernel_size[1])
+    x = x.view(batch_size, -1, x.size(2), x.size(3))
     return x
 
 
@@ -177,12 +183,13 @@ class Compute_H_bar_D:
         - Tensor: The diagonal of the covariance matrix of the activations.
         """
         batch_size = h.size(0)
-        h = _extract_patches(h, layer.kernel_size, layer.stride, layer.padding)
+        h = _extract_patches(h, layer.kernel_size, layer.stride, layer.padding, layer.groups)
         spatial_size = h.size(2) * h.size(3)
         h = h.reshape(-1, h.size(-1))
         if layer.bias is not None:
             h_bar = cat([h, h.new(h.size(0), 1).fill_(1)], 1)
-        return einsum('ij,ij->j', h_bar, h_bar) / (batch_size * spatial_size) if layer.bias is not None else einsum('ij,ij->j', h, h) / (batch_size * spatial_size)
+        return einsum('ij,ij->j', h_bar, h_bar) / (batch_size * spatial_size) if layer.bias is not None \
+            else einsum('ij,ij->j', h, h) / (batch_size * spatial_size)
 
     @staticmethod
     def linear(h: Tensor, layer: Linear) -> Tensor:
@@ -201,7 +208,8 @@ class Compute_H_bar_D:
         batch_size = h.size(0)
         if layer.bias is not None:
             h_bar = cat([h, h.new(h.size(0), 1).fill_(1)], 1)
-        return einsum('ij,ij->j', h_bar, h_bar) / batch_size if layer.bias is not None else einsum('ij,ij->j', h, h)
+        return einsum('ij,ij->j', h_bar, h_bar) / batch_size if layer.bias is not None \
+            else einsum('ij,ij->j', h, h)
 
     @staticmethod
     def batchnorm2d(h: Tensor, layer: BatchNorm2d) -> Tensor:
@@ -592,7 +600,8 @@ class AdaFisherBackBone(Optimizer):
         params = param[idx_param]
         module = self.modules[idx_module]
         param_size = params.data.size()
-        return param_size == module.weight.data.size() or (module.bias is not None and param_size == module.bias.data.size())
+        return (param_size == module.weight.data.size() or
+                (module.bias is not None and param_size == module.bias.data.size()))
 
 
 class AdaFisher(AdaFisherBackBone):
@@ -725,7 +734,8 @@ class AdaFisher(AdaFisherBackBone):
             raise NotImplementedError("Closure not supported.")
         for group in self.param_groups:
             idx_param, idx_module, buffer_count = 0, 0, 0
-            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'], "beta": group['beta'], "lr": group['lr']}
+            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'],
+                                                       "beta": group['beta'], "lr": group['lr']}
             for _ in range(len(self.modules)):
                 if param[idx_param].grad is None:
                     idx_param += 1
@@ -847,7 +857,8 @@ class AdaFisherW(AdaFisherBackBone):
         bias_correction1 = 1 - beta1 ** state['step']
         # Decay the first and second moment running average coefficient
         exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-        param.data -= hyperparameters['lr'] * (exp_avg / bias_correction1 / F_tilde + hyperparameters['weight_decay'] * param.data)
+        param.data -= hyperparameters['lr'] * (exp_avg / bias_correction1 / F_tilde + hyperparameters['weight_decay']
+                                               * param.data)
 
 
     @no_grad()
@@ -877,7 +888,8 @@ class AdaFisherW(AdaFisherBackBone):
             raise NotImplementedError("Closure not supported.")
         for group in self.param_groups:
             idx_param, idx_module, buffer_count = 0, 0, 0
-            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'], "beta": group['beta'], "lr": group['lr']}
+            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'],
+                                                       "beta": group['beta'], "lr": group['lr']}
             for _ in range(len(self.modules)):
                 if param[idx_param].grad is None:
                     idx_param += 1

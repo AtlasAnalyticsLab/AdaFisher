@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Tuple, Any
 
 import torchvision.transforms as transforms
 
@@ -61,7 +62,7 @@ def get_data(
         n_holes: int = -1,
         length: int = -1,
         aug: bool = True,
-        dist: bool = False) -> None:
+        dist: bool = False) -> Tuple[Any, Any, int]:
     
     if name == 'CIFAR10':
         num_classes = 10
@@ -103,12 +104,9 @@ def get_data(
         testset = torchvision.datasets.CIFAR10(
             root=str(root), train=False,
             download=True, transform=transform_test)
-        test_sampler = \
-            torch.utils.data.distributed.DistributedSampler(
-                testset) if dist else None
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
-            num_workers=num_workers, sampler=test_sampler, pin_memory=True)
+            num_workers=num_workers, pin_memory=True)
         
     elif name == 'CIFAR100':
         num_classes = 100
@@ -152,12 +150,9 @@ def get_data(
         testset = torchvision.datasets.CIFAR100(
             root=str(root), train=False,
             download=True, transform=transform_test)
-        test_sampler = \
-            torch.utils.data.distributed.DistributedSampler(
-                testset) if dist else None
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
-            num_workers=num_workers, sampler=test_sampler, pin_memory=True)
+            num_workers=num_workers, pin_memory=True)
         
     elif name == 'ImageNet':
         num_classes = 1000
@@ -234,11 +229,7 @@ def get_data(
         testset = torchvision.datasets.ImageFolder(
             root=str(root / 'val'), 
             transform=transform_test)
-        test_sampler = \
-            torch.utils.data.distributed.DistributedSampler(
-                testset) if dist else None
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
             num_workers=num_workers, pin_memory=True)
-        
     return train_loader, test_loader, num_classes

@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import os
 import sys
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from optimizers.lr_scheduler import CosineAnnealingWarmRestarts, StepLR, OneCycleLR, CosineAnnealingLR
 # import logging
@@ -14,13 +15,16 @@ import os
 import json
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
+from torch.utils.data import DataLoader
 from torch.distributed import init_process_group, destroy_process_group
 import numpy as np
 import torch
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
 import yaml
+
 try:
     import nvidia_smi
+
     MEM_TRACKING = True
 except ModuleNotFoundError:
     MEM_TRACKING = False
@@ -31,14 +35,23 @@ from utils.early_stop import EarlyStop
 from models import get_network
 from utils.utils import parse_config
 from utils.data import get_data
-from torchvision.models import (resnet50, ResNet50_Weights, mobilenet_v3_large, MobileNet_V3_Large_Weights, 
-                               densenet121, DenseNet121_Weights, resnet101, ResNet101_Weights)
+from torchvision.models import (resnet50, ResNet50_Weights, mobilenet_v3_large, MobileNet_V3_Large_Weights,
+                                densenet121, DenseNet121_Weights, resnet101, ResNet101_Weights)
+
 
 def args(sub_parser: _SubParsersAction):
+    sub_parser.add_argument(
+        '--seed', dest='seed',
+        default=42, type=int,
+        help="Set the random seed: Default = 42")
     sub_parser.add_argument(
         '--config', dest='config',
         default='config.yaml', type=str,
         help="Set configuration file path: Default = 'config.yaml'")
+    sub_parser.add_argument(
+        '--root', dest='root',
+        default='./../', type=str,
+        help="Set root path of project that parents all others: Default = './../'")
     sub_parser.add_argument(
         '--data', dest='data',
         default='data', type=str,
@@ -59,10 +72,6 @@ def args(sub_parser: _SubParsersAction):
         '--save-freq', default=25, type=int,
         help='Checkpoint epoch save frequency: Default = 25')
     sub_parser.add_argument(
-        '--root', dest='root',
-        default='./../', type=str,
-        help="Set root path of project that parents all others: Default = './../'")
-    sub_parser.add_argument(
         '--cpu', action='store_true',
         dest='cpu',
         help="Flag: CPU bound training: Default = False")
@@ -73,22 +82,24 @@ def args(sub_parser: _SubParsersAction):
         help="Distributed training: Default = False")
     sub_parser.set_defaults(dist=False)
     sub_parser.add_argument(
-        '--pretrained',action='store_true',
+        '--pretrained', action='store_true',
         dest='pretrained',
         help="Pretrained weights for (Resnet50, Resnet101, DenseNet121, MobileNetV3): Default = False")
 
+
 class TrainingAgent:
     config: Dict[str, Any] = None
-    train_loader = None
-    test_loader = None
-    train_sampler = None
+    train_loader: DataLoader = None
+    test_loader: DataLoader = None
     num_classes: int = None
     network: torch.nn.Module = None
     optimizer: torch.optim.Optimizer = None
-    scheduler = None
-    loss = None
+    scheduler: torch.optim.lr_scheduler.LRScheduler = None
+    criterion: torch.nn.Module = None
     output_filename: Path = None
     checkpoint = None
+    early_stop = None
+    gm = None
 
     def __init__(
             self,
@@ -100,6 +111,7 @@ class TrainingAgent:
             resume: Path = None,
             save_freq: int = 25,
             dist: bool = False,
+            autocast: bool = False,
             pretrained: bool = False) -> None:
 
         self.dist = dist
@@ -111,6 +123,7 @@ class TrainingAgent:
         self.start_epoch = 0
         self.start_trial = 0
         self.device = device
+        self.autocast = autocast
         self.data_path = data_path
         self.output_path = output_path
         self.checkpoint_path = checkpoint_path
@@ -160,7 +173,7 @@ class TrainingAgent:
             self.best_acc1 = self.checkpoint['best_acc1']
             print(f'Resuming config for trial {self.start_trial} at ' +
                   f'epoch {self.start_epoch}')
-            
+
     def get_pretrained_model(self):
         if self.config['network'] == "resnet50Cifar":
             standard_model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
@@ -175,17 +188,17 @@ class TrainingAgent:
             standard_model.fc = nn.Linear(num_features, self.num_classes)
             self.network.load_state_dict(standard_model.state_dict(), strict=False)
         elif self.config['network'] == "mobilenetv3":
-            standard_model = mobilenet_v3_large(weights = MobileNet_V3_Large_Weights.IMAGENET1K_V2)
+            standard_model = mobilenet_v3_large(weights=MobileNet_V3_Large_Weights.IMAGENET1K_V2)
             standard_model.classifier[3] = torch.nn.Linear(standard_model.classifier[3].in_features, self.num_classes)
             self.network.load_state_dict(standard_model.state_dict(), strict=False)
         elif self.config['network'] == "densenet121Cifar":
-            standard_model = densenet121(weights = DenseNet121_Weights.IMAGENET1K_V1)
+            standard_model = densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1)
             num_features = standard_model.classifier.in_features
             standard_model.classifier = nn.Linear(num_features, self.num_classes)
             self.network.load_state_dict(standard_model.state_dict(), strict=False)
         else:
             raise NotImplementedError(f"{self.config['network']} does not support pretrained weights yet")
-                
+
     def reset(self, learning_rate: float) -> None:
         self.network = get_network(name=self.config['network'], num_classes=self.num_classes)
         for layer in self.network.modules():
@@ -236,28 +249,20 @@ class TrainingAgent:
         self.early_stop.reset()
 
     def create_output_dir(self, checkpoint: bool = False):
+        def create_dir(path: Path):
+            if not path.exists():
+                print(f"Info: Directory {path} does not exist, building")
+                path.mkdir(exist_ok=True, parents=True)
+            return path
+
         opt = self.config['optimizer']
         net = self.config['network']
-        if checkpoint:
-            output_path_checkpoint_opt = self.checkpoint_path / Path(opt).expanduser()
-            if not output_path_checkpoint_opt.exists():
-                print(f"Info: Checkpoint dir {output_path_checkpoint_opt} does not exist, building")
-                output_path_checkpoint_opt.mkdir(exist_ok=True, parents=True)
-            output_path_checkpoint_net = output_path_checkpoint_opt / Path(net).expanduser()
-            if not output_path_checkpoint_net.exists():
-                print(f"Info: Checkpoint dir {output_path_checkpoint_net} does not exist, building")
-                output_path_checkpoint_net.mkdir(exist_ok=True, parents=True)
-            return output_path_checkpoint_net
-        else:
-            output_path_opt = self.output_path / Path(opt).expanduser()
-            if not output_path_opt.exists():
-                print(f"Info: Output dir {output_path_opt} does not exist, building")
-                output_path_opt.mkdir(exist_ok=True, parents=True)
-            output_path_net = output_path_opt / Path(net).expanduser()
-            if not output_path_net.exists():
-                print(f"Info: Output dir {output_path_net} does not exist, building")
-                output_path_net.mkdir(exist_ok=True, parents=True)
-            return output_path_net
+
+        base_path = self.checkpoint_path if checkpoint else self.output_path
+        output_path_opt = create_dir(base_path / Path(opt).expanduser())
+        output_path_net = create_dir(output_path_opt / Path(net).expanduser())
+
+        return output_path_net
 
     def train(self) -> None:
         learning_rate = self.config['init_lr']
@@ -279,12 +284,13 @@ class TrainingAgent:
             else:
                 epochs = range(0, self.config['max_epochs'])
                 output_path_net = self.create_output_dir()
-                self.output_filename = ((f"date={datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_results_trial={trial}_"
-                                        f"{self.config['network']}_{self.config['dataset']}_{self.config['optimizer']}_")
-                                        + '_'.join([f"{k}={v}" for k, v in self.config['optimizer_kwargs'].items()]) +
-                                        f"_{self.config['scheduler']}" +
-                                        '_'.join([f"{k}={v}" for k, v in self.config['scheduler_kwargs'].items()]) +
-                                        f"_LR={learning_rate}")
+                self.output_filename = Path(
+                    (f"date={datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_results_trial={trial}_"
+                     f"{self.config['network']}_{self.config['dataset']}_{self.config['optimizer']}_")
+                    + '_'.join([f"{k}={v}" for k, v in self.config['optimizer_kwargs'].items()]) +
+                    f"_{self.config['scheduler']}" +
+                    '_'.join([f"{k}={v}" for k, v in self.config['scheduler_kwargs'].items()]) +
+                    f"_LR={learning_rate}")
 
             lr_output_path = output_path_net / self.output_filename
             lr_output_path.mkdir(exist_ok=True, parents=True)
@@ -292,11 +298,9 @@ class TrainingAgent:
             self.run_epochs(trial, epochs)
 
     def on_time_results(self, results: dict, epoch: int) -> None:
-
         if epoch == 0:
             with open(os.path.join(self.output_filename, "config.json"), "w") as f:
                 json.dump(self.config, f, indent=2)
-
         files_to_keys = {
             "train_loss.txt": 'train_loss',
             "train_accuracy1.txt": 'train_acc1',
@@ -394,37 +398,43 @@ class TrainingAgent:
         top1 = AverageMeter()
         top5 = AverageMeter()
         precision = torch.float16 if self.config['precision'] == 'fp16' else torch.float32
-        scaler = GradScaler(enabled=True)
+        scaler = GradScaler(enabled=True) if self.autocast else None
         # switch to train mode
         self.network.train()
-        for i, (input, target) in enumerate(self.train_loader):
-            target = target.to(self.gpu)
-            input = input.to(self.gpu)
+        for i, (inputs, targets) in enumerate(self.train_loader):
+            targets = targets.to(self.gpu)
+            inputs = inputs.to(self.gpu)
             if isinstance(self.scheduler, CosineAnnealingWarmRestarts):
                 self.scheduler.step(epoch + i / len(self.train_loader))
             self.optimizer.zero_grad()
             if self.config['optimizer'] in ["Shampoo", "kfac"]:
-                dummy_y = self.gm.setup_model_call(self.network, input)
-                self.gm.setup_loss_call(self.criterion, dummy_y, target)
-                output, loss = self.gm.forward_and_backward()
+                dummy_y = self.gm.setup_model_call(self.network, inputs)
+                self.gm.setup_loss_call(self.criterion, dummy_y, targets)
+                outputs, loss = self.gm.forward_and_backward()
                 torch.nn.utils.clip_grad_norm_(self.network.parameters(),
                                                self.config['optimizer_kwargs']['clipping_norm'])
                 self.optimizer.step()
             else:
-                with torch.autocast(device_type=self.gpu, dtype=precision, enabled=True):
-                    output = self.network(input)
-                    loss = self.criterion(output, target)
-                if isinstance(self.optimizer, Adahessian):
-                    scaler.scale(loss).backward(create_graph=True)
+                if self.autocast:
+                    with torch.autocast(device_type=self.gpu, dtype=precision, enabled=True):
+                        outputs = self.network(inputs)
+                        loss = self.criterion(outputs, targets)
                 else:
-                    scaler.scale(loss).backward()
-                scaler.step(self.optimizer)
-                scaler.update()
+                    outputs = self.network(inputs)
+                    loss = self.criterion(outputs, targets)
+                if isinstance(self.optimizer, Adahessian):
+                    scaler.scale(loss).backward(create_graph=True) if self.autocast else loss.backward(
+                        create_graph=True)
+                else:
+                    scaler.scale(loss).backward() if self.autocast else loss.backward()
+                scaler.step(self.optimizer) if self.autocast else self.optimizer.step()
+                if self.autocast:
+                    scaler.update()
 
-            prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec1[0], input.size(0))
-            top5.update(prec5[0], input.size(0)) 
+            prec1, prec5 = accuracy(outputs.data, targets, topk=(1, 5))
+            losses.update(loss.item(), inputs.size(0))
+            top1.update(prec1[0], inputs.size(0))
+            top5.update(prec5[0], inputs.size(0))
             if isinstance(self.scheduler, OneCycleLR):
                 self.scheduler.step()
         return losses.avg, top1.avg, top5.avg
@@ -435,24 +445,28 @@ class TrainingAgent:
         top5 = AverageMeter()
         # switch to evaluate mode
         self.network.eval()
-        for i, (input, target) in enumerate(self.test_loader):
-            target = target.to(self.gpu)
-            input = input.to(self.gpu)
+        for i, (inputs, targets) in enumerate(self.test_loader):
+            targets = targets.to(self.gpu)
+            inputs = inputs.to(self.gpu)
             with torch.no_grad():
                 # compute output
-                output = self.network(input)
-                loss = self.criterion(output, target)
+                outputs = self.network(inputs)
+                loss = self.criterion(outputs, targets)
 
             # measure accuracy and record loss
-            prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec1[0], input.size(0))
-            top5.update(prec5[0], input.size(0))
+            prec1, prec5 = accuracy(outputs.data, targets, topk=(1, 5))
+            losses.update(loss.item(), inputs.size(0))
+            top1.update(prec1[0], inputs.size(0))
+            top5.update(prec5[0], inputs.size(0))
         return losses.avg, top1.avg, top5.avg
 
 
-class AverageMeter(object):
+class AverageMeter:
     """Computes and stores the average and current value"""
+    val: float
+    avg: float
+    sum: float
+    count: int
 
     def __init__(self):
         self.reset()
@@ -463,7 +477,7 @@ class AverageMeter(object):
         self.sum = 0
         self.count = 0
 
-    def update(self, val, n=1):
+    def update(self, val: float, n: int = 1):
         self.val = val
         self.sum += val * n
         self.count += n
@@ -485,7 +499,7 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def setup_dirs(args: APNamespace) -> Tuple[Path, Path, Path, Path]:
+def setup_dirs(args: APNamespace) -> Tuple[Path, Path, Path, Path, Path | None]:
     root_path = Path(args.root).expanduser()
     config_path = root_path / Path(args.config).expanduser()
     data_path = root_path / Path(args.data).expanduser()
@@ -525,12 +539,16 @@ def main(args: APNamespace):
 
 
 def main_worker(args: APNamespace):
+    torch.manual_seed(args.seed)
     if torch.cuda.is_available() and not args.cpu:
         device = 'cuda'
-    elif torch.backends.mps.is_available():
-        device ='mps'
+        autocast = True
+    elif torch.backends.mps.is_available() and not args.cpu:
+        device = 'mps'
+        autocast = False
     else:
         device = 'cpu'
+        autocast = False
     training_agent = TrainingAgent(
         config_path=args.config_path,
         device=device,
@@ -540,6 +558,7 @@ def main_worker(args: APNamespace):
         save_freq=args.save_freq,
         checkpoint_path=args.checkpoint_path,
         dist=args.dist,
+        autocast=autocast,
         pretrained=args.pretrained)
     print(f"Info: Pytorch device is set to {training_agent.device}")
     training_agent.train()

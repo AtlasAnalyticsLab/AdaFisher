@@ -12,6 +12,7 @@ optimizer_kwargs:  # named-kwargs to pass to optimizer.
   weight_decay: 0.01
   gammas: [0.92, 0.008]
   Lambda: 1e-3
+  dist: False
 scheduler_kwargs: # named-kwargs to pass to scheduler.
   T_max: 200
 aug: True

@@ -4,6 +4,7 @@ from typing import Callable, Dict, List, Union, Tuple, Type
 from torch import (Tensor, kron, is_grad_enabled, no_grad, zeros_like,
                    preserve_format, ones_like, cat, einsum, sum, inf)
 from torch.optim import Optimizer
+import torch.distributed as dist
 from torch.nn import Module, Parameter
 from torch.nn.functional import pad
 from math import prod
@@ -604,6 +605,269 @@ class AdaFisherBackBone(Optimizer):
                 (module.bias is not None and param_size == module.bias.data.size()))
 
 
+class AdaFisherBackBone(Optimizer):
+    """
+    The AdaFisherBackBone class serves as the base class for optimizers that adjust model parameters 
+    based on the Fisher Information Matrix to more efficiently navigate the curvature of the loss landscape. 
+    This class is designed to work with neural network models and supports specific module types 
+    for which Fisher Information can be effectively computed.
+
+    The class initializes with model-related parameters and configurations for the optimizer, 
+    including learning rate adjustments and regularization techniques based on the second-order 
+    information. It integrates advanced techniques such as dynamic preconditioning with the Fisher 
+    Information to stabilize and speed up the convergence of the training process.
+
+    Attributes:
+        SUPPORTED_MODULES (Tuple[Type[str], ...]): A tuple listing the types of model modules (layers) 
+        supported by this optimizer. Typical supported types include "Linear", "Conv2d", 
+        "BatchNorm2d", and "LayerNorm".
+
+    Args:
+        model (Module): The neural network model to optimize.
+        lr (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
+        beta (float, optional): The beta parameter for the optimizer, used in calculations 
+                                like those in momentum. Defaults to 0.9.
+        Lambda (float, optional): Regularization parameter. Defaults to 1e-3.
+        gammas (List[float], optional): A list containing gamma parameters used in the 
+                                        running average computations. Defaults to [0.92, 0.008].
+        TCov (int, optional): Interval in steps for recalculating the covariance matrices. Defaults to 100.
+        weight_decay (float, optional): Weight decay coefficient to help prevent overfitting. Defaults to 0.
+        dist (bool, optional): True when using a Mutli-GPUs environment, otherwise False.
+
+    Raises:
+        ValueError: If any of the parameters are out of their expected ranges.
+    """ 
+    
+    SUPPORTED_MODULES: Tuple[Type[str], ...] = ("Linear", "Conv2d", "BatchNorm2d", "LayerNorm")
+
+    def __init__(self,
+                 model: Module,
+                 lr: float = 1e-3,
+                 beta: float = 0.9,
+                 Lambda: float = 1e-3,
+                 gammas: List = [0.92, 0.008],
+                 TCov: int = 100,
+                 weight_decay: float = 0,
+                 dist: bool = False
+                 ):
+        if not 0.0 <= lr:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        if not 0.0 <= beta < 1.0:
+            raise ValueError(f"Invalid beta parameter: {beta}")
+        if not 0.0 <= gammas[0] < 1.0:
+            raise ValueError(f"Invalid gamma parameter at index 0: {gammas[0]}")
+        if not 0.0 <= gammas[1] < 1.0:
+            raise ValueError(f"Invalid gamma parameter at index 1: {gammas[1]}")
+        if not TCov > 0:
+            raise ValueError(f"Invalid TCov parameter: {TCov}")
+        defaults = dict(lr=lr, beta=beta,
+                        weight_decay=weight_decay)
+
+        self.gammas = gammas
+        self.Lambda = Lambda
+        self.model = model
+        self.TCov = TCov
+        self.dist = dist
+        self.steps = 0
+
+        # store vectors for the pre-conditioner
+        self.H_bar_D: Dict[Module, Tensor] = {}
+        self.S_D: Dict[Module, Tensor] = {}
+        # save the layers of the network where FIM can be computed
+        self.modules: List[Module] = []
+        self.Compute_H_bar_D = Compute_H_bar_D()
+        self.Compute_S_D = Compute_S_D()
+        self._prepare_model()
+        super(AdaFisherBackBone, self).__init__(model.parameters(), defaults)
+
+    def _save_input(self, module: Module, input: Tensor, output: Tensor):
+        """
+        Captures and updates the diagonal elements of the activation covariance matrix for a given
+        module at specified intervals. This method is part of the AdaFisher optimizer's mechanism to
+        incorporate curvature information from the model's activations into the optimization process.
+
+        Specifically, it computes the diagonal of the activation covariance matrix for the current
+        input to the module. This computation is performed at intervals defined by the `TCov` attribute
+        of the optimizer. The method then updates a running average of these diagonal elements,
+        maintaining this information as part of the optimizer's internal state. This updated state
+        is later used to adjust the optimization strategy based on the geometry of the loss surface.
+
+        Parameters:
+            - module (Module): The module (layer) of the neural network for which the activations are
+                               being analyzed. This module should be compatible with the operations
+                               defined in the `Compute_H_bar_D` method.
+            - input (Tensor): The input tensor to the `module` during the forward pass. Only the first
+                              element of the tuple is used, which is expected to be a tensor representing
+                              the data input to the module.
+            - output (Tensor): The output tensor from the `module` during the forward pass. This parameter
+                               is not used within the method but is required to match the signature for
+                               PyTorch hook functions.
+
+        Note:
+        This method should be attached as a forward hook to the relevant PyTorch modules within the
+        model being optimized. It plays a crucial role in the AdaFisher optimization process by
+        leveraging real-time curvature information derived from the model's activations. The periodic
+        computation and updating mechanism ensures an efficient balance between capturing accurate
+        curvature information and maintaining computational performance.
+        """
+        if is_grad_enabled() and self.steps % self.TCov == 0:
+            H_bar_D_i = self.Compute_H_bar_D(input[0].data, module)
+            if self.steps == 0:
+                self.H_bar_D[module] = H_bar_D_i.new(H_bar_D_i.size(0)).fill_(1)
+            update_running_avg(MinMaxNormalization(H_bar_D_i), self.H_bar_D[module], self.gammas)
+            
+
+    def _save_grad_output(self, module: Module, grad_input: Tensor, grad_output: Tensor):
+        """
+        Updates the optimizer's internal state by capturing and maintaining the diagonal elements
+        of the gradient covariance matrix for a given module. This operation is conducted at
+        intervals specified by the `TCov` attribute, focusing on the gradients of the output
+        with respect to the module's parameters.
+
+        At each specified interval, this method computes the diagonal of the gradient covariance
+        matrix based on the gradients of the module's output. This information is crucial for
+        adapting the optimizer's behavior according to the curvature of the loss surface, as
+        reflected by the gradients' distribution. The computed diagonal elements are then used to
+        update a running average stored in the optimizer's internal state, ensuring that the
+        optimizer's adjustments are based on up-to-date curvature information.
+
+        Parameters:
+            - module (Module): The neural network module (layer) for which gradient information is
+                               being analyzed. This should be a module for which gradients are
+                               computed during the backward pass.
+            - grad_input (Tensor): The gradient of the loss with respect to the input of the `module`.
+                                   This parameter is not directly used within the method but is included
+                                   to match the signature required for PyTorch backward hooks.
+            - grad_output (Tensor): The gradient of the loss with respect to the output of the `module`.
+                                    Only the first element of this tuple is used, which is expected to
+                                    be a tensor representing the gradient data.
+
+        Note:
+        This method is designed to be attached as a backward hook to the relevant PyTorch modules
+        within the model being optimized. By capturing real-time information on the distribution of
+        gradients, it enables the AdaFisher optimizer to make more informed adjustments to the model
+        parameters, factoring in the curvature of the loss surface for more efficient optimization.
+        """
+        if self.steps % self.TCov == 0:
+            S_D_i = self.Compute_S_D(grad_output[0].data, module)
+            if self.steps == 0:
+                self.S_D[module] = S_D_i.new(S_D_i.size(0)).fill_(1)
+            update_running_avg(MinMaxNormalization(S_D_i), self.S_D[module], self.gammas)
+
+    def _prepare_model(self):
+        """
+        Prepares the model for optimization by registering forward and backward hooks on supported
+        modules. These hooks are crucial for capturing activation and gradient information necessary
+        for the AdaFisher optimizer to adjust its parameters based on the curvature of the loss
+        surface.
+
+        This method iterates through all the modules in the model, identifying those that are
+        supported based on a predefined list of module class names (`SUPPORTED_MODULES`). It then
+        registers forward hooks to capture activation information and backward hooks to capture
+        gradient information. These hooks are attached to functions within the optimizer that
+        compute and update the running averages of the activation and gradient covariance matrices.
+
+        Note:
+            - When defining the model to be optimized with AdaFisher, avoid using in-place operations
+              (e.g., `relu(inplace=True)` or '*=') within the modules. In-place operations can disrupt the proper functioning
+              of the forward and backward hooks, leading to incorrect computations or even runtime errors.
+              This limitation arises because in-place operations modify the data directly, potentially
+              bypassing or altering the data flow that the hooks rely on to capture activation and gradient
+              information accurately.
+            - Only modules whose class names are in the `SUPPORTED_MODULES` list will have hooks registered.
+              It is essential to ensure that the model's critical components for capturing curvature
+              information are supported to leverage the full capabilities of the AdaFisher optimizer.
+
+        This preparation step is a critical prerequisite to using the AdaFisher optimizer effectively,
+        enabling it to dynamically adjust optimization strategies based on real-time insights into
+        the model's behavior.
+        """
+        for module in self.model.modules():
+            classname = module.__class__.__name__
+            if classname in self.SUPPORTED_MODULES:
+                self.modules.append(module)
+                module.register_forward_hook(self._save_input)
+                module.register_full_backward_hook(self._save_grad_output)
+    
+    def aggregate_kronecker_factors(self, module: Module):
+        """
+        Aggregates Kronecker factors across multiple GPUs in a distributed setting.
+
+        This function performs an all-reduce operation to sum the Kronecker factors 
+        `H_bar_D` and `S_D` across all GPUs involved in the training. It then averages 
+        these factors by dividing the summed values by the total number of GPUs (`world_size`).
+
+        Args:
+            module (Module): The neural network module for which the Kronecker factors 
+                            `H_bar_D` and `S_D` are being aggregated.
+        """
+        dist.all_reduce(self.H_bar_D[module], op=dist.ReduceOp.SUM)
+        dist.all_reduce(self.S_D[module], op=dist.ReduceOp.SUM)
+
+        self.H_bar_D[module] /= dist.get_world_size()
+        self.S_D[module] /= dist.get_world_size()
+
+    def _get_F_tilde(self, module: Module):
+        """
+        Computes the FIM for a given module's parameters. This method is called internally by the AdaFisher optimizer
+        during the optimization process to adjust the parameters of the model in a way that considers both
+        the curvature of the loss surface and a damping term.
+
+        The Fisher Information Matrix is approximated using the Kronecker product of the diagonal
+        elements of the activation and gradient covariance matrices, captured for the module through
+        the optimizer's forward and backward hooks. This approximation is then regularized by adding
+        a scalar (Lambda) to its diagonal to ensure numerical stability and to incorporate prior
+        knowledge or assumptions about the parameter distribution.
+
+        Parameters:
+            - module (Module): The module for which the parameter update is being computed. The method
+                               checks if the module has a bias term and adjusts the computation
+                               accordingly.
+
+        Returns:
+            - A tensor or list of tensors representing the update to be applied to the module's
+              parameters. For modules with bias, the update is returned as a list containing separate
+              updates for the weights and the bias. For modules without bias, a single tensor F_tilde
+              is returned.
+
+        Note:
+        This method directly manipulates the gradients of the module's parameters based on the
+        computed Fisher Information and is a key component of the AdaFisher optimizer's strategy
+        to leverage curvature information for more efficient and effective optimization.
+        """
+        # Fisher Computation
+        if self.dist:
+            self.aggregate_kronecker_factors(module = module)
+        F_tilde = kron(self.H_bar_D[module].unsqueeze(1), self.S_D[module].unsqueeze(0)).t() + self.Lambda
+        if module.bias is not None:
+            F_tilde = [F_tilde[:, :-1], F_tilde[:, -1:]]
+            F_tilde[0] = F_tilde[0].view(*module.weight.grad.data.size())
+            F_tilde[1] = F_tilde[1].view(*module.bias.grad.data.size())
+            return F_tilde
+        else:
+            return F_tilde.reshape(module.weight.grad.data.size())
+
+    def _check_dim(self, param: List[Parameter], idx_module: int, idx_param: int) -> bool:
+        """
+        Checks if the dimensions of a given parameter match the dimensions of its corresponding module's weights or bias.
+        This function is crucial for ensuring that the Fisher information is available for a specific module.
+
+        Parameters:
+            - param (List[Parameter]): A list of all parameters within the model.
+            - idx_module (int): The index of the module within the model's modules list.
+            - idx_param (int): The index of the parameter within the list of parameters being checked.
+
+        Returns:
+            - bool: True if the parameter's dimensions match those of the corresponding module's weights or bias
+            (Fisher information is available);
+            False otherwise.
+        """
+        params = param[idx_param]
+        module = self.modules[idx_module]
+        param_size = params.data.size()
+        return param_size == module.weight.data.size() or (module.bias is not None and param_size == module.bias.data.size())
+
+
 class AdaFisher(AdaFisherBackBone):
     """AdaFisher Optimizer: An adaptive learning rate optimizer that leverages Fisher Information for parameter updates.
 
@@ -644,7 +908,8 @@ class AdaFisher(AdaFisherBackBone):
                  Lambda: float = 1e-3,
                  gammas: List = [0.92, 0.008],
                  TCov: int = 100,
-                 weight_decay: float = 0
+                 weight_decay: float = 0,
+                 dist: bool = False
                 ):
         super(AdaFisher, self).__init__(model,
                                         lr = lr,
@@ -652,6 +917,7 @@ class AdaFisher(AdaFisherBackBone):
                                         Lambda = Lambda,
                                         gammas = gammas,
                                         TCov = TCov,
+                                        dist = dist,
                                         weight_decay = weight_decay)
         
     @no_grad()
@@ -734,8 +1000,7 @@ class AdaFisher(AdaFisherBackBone):
             raise NotImplementedError("Closure not supported.")
         for group in self.param_groups:
             idx_param, idx_module, buffer_count = 0, 0, 0
-            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'],
-                                                       "beta": group['beta'], "lr": group['lr']}
+            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'], "beta": group['beta'], "lr": group['lr']}
             for _ in range(len(self.modules)):
                 if param[idx_param].grad is None:
                     idx_param += 1
@@ -752,7 +1017,7 @@ class AdaFisher(AdaFisherBackBone):
                     F_tilde = self._get_F_tilde(m)
                     idx_module += 1
                 else:
-                    F_tilde = ones_like(param[idx_param])
+                    F_tilde = ones_like(param[idx_param]) 
                 if isinstance(F_tilde, list):
                     for F_tilde_i in F_tilde:
                         self._step(hyperparameters, param[idx_param], F_tilde_i)
@@ -803,7 +1068,8 @@ class AdaFisherW(AdaFisherBackBone):
                  Lambda: float = 1e-3,
                  gammas: List = [0.92, 0.008],
                  TCov: int = 100,
-                 weight_decay: float = 0
+                 weight_decay: float = 0,
+                 dist: bool = False
                 ):
         super(AdaFisherW, self).__init__(model,
                                         lr = lr,
@@ -811,6 +1077,7 @@ class AdaFisherW(AdaFisherBackBone):
                                         Lambda = Lambda,
                                         gammas = gammas,
                                         TCov = TCov,
+                                        dist = dist,
                                         weight_decay = weight_decay)
     
     @no_grad()
@@ -857,8 +1124,7 @@ class AdaFisherW(AdaFisherBackBone):
         bias_correction1 = 1 - beta1 ** state['step']
         # Decay the first and second moment running average coefficient
         exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-        param.data -= hyperparameters['lr'] * (exp_avg / bias_correction1 / F_tilde + hyperparameters['weight_decay']
-                                               * param.data)
+        param.data -= hyperparameters['lr'] * (exp_avg / bias_correction1 / F_tilde + hyperparameters['weight_decay'] * param.data)
 
 
     @no_grad()
@@ -888,8 +1154,7 @@ class AdaFisherW(AdaFisherBackBone):
             raise NotImplementedError("Closure not supported.")
         for group in self.param_groups:
             idx_param, idx_module, buffer_count = 0, 0, 0
-            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'],
-                                                       "beta": group['beta'], "lr": group['lr']}
+            param, hyperparameters = group['params'], {"weight_decay": group['weight_decay'], "beta": group['beta'], "lr": group['lr']}
             for _ in range(len(self.modules)):
                 if param[idx_param].grad is None:
                     idx_param += 1

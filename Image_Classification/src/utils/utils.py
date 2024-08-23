@@ -1,34 +1,4 @@
 from typing import Dict, Union, List
-import pstats
-
-
-def safe_float_cast(str_number: str) -> float:
-    try:
-        number = float(str_number)
-    except ValueError:
-        number = float('nan')
-    return number
-
-
-def pstats_to_dict(stats: pstats.Stats) -> List[Dict[str, Union[str, float]]]:
-    formatted_stats = list()
-    stats = 'ncalls' + stats.split('ncalls')[-1]
-    stats = [line.rstrip().split(None, 5) for line in
-             stats.split('\n')]
-    for stat in stats[1:]:
-        stats_dict = dict()
-        if len(stat) >= 5:
-            stats_dict['n_calls'] = stat[0]
-            stats_dict['tot_time'] = stat[1]
-            stats_dict['per_call1'] = stat[2]
-            stats_dict['cum_time'] = stat[3]
-            stats_dict['per_call2'] = stat[4]
-            name = stat[5].split(':')
-            stats_dict['name'] = \
-                f"{name[0].split('/')[-1]}_line(function)_{name[1]}"
-            formatted_stats.append(stats_dict)
-    return formatted_stats
-
 
 def smart_string_to_float(
         string: str,
@@ -48,7 +18,6 @@ def smart_string_to_int(
         return ret
     except ValueError:
         raise ValueError(e)
-    return float('inf')
 
 
 def parse_config(

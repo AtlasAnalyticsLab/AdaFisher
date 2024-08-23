@@ -212,7 +212,6 @@ class TrainingAgent:
             self.network = self.network.to(self.gpu)
         elif self.dist:
             self.network.to(self.gpu)
-            self.network = nn.SyncBatchNorm.convert_sync_batchnorm(self.network)
             self.network = torch.nn.parallel.DistributedDataParallel(
                 self.network, device_ids=[self.gpu])
         else:
@@ -261,7 +260,6 @@ class TrainingAgent:
         base_path = self.checkpoint_path if checkpoint else self.output_path
         output_path_opt = create_dir(base_path / Path(opt).expanduser())
         output_path_net = create_dir(output_path_opt / Path(net).expanduser())
-
         return output_path_net
 
     def train(self) -> None:

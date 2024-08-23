@@ -110,6 +110,9 @@ For detailed information on all available command-line options, execute the foll
 ```console
 python train.py --help
 ```
+### Distributed Training ⚡️
+
+AdaFisher is fully compatible with multi-GPU environments through its distributed version. To enable this functionality, ensure that the **dist** parameter in the AdaFisher YAML configuration file is set to True when using a distributed environment.
 
 ## 🌟 Getting Started 
 

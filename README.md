@@ -3,6 +3,9 @@
 Abstract, _First-order optimization methods are currently the mainstream in training deep neural networks (DNNs). Optimizers like Adam incorporate limited curvature information by employing the diagonal matrix preconditioning of the stochastic gradient during the training. Despite their widespread, second-order optimization algorithms exhibit superior convergence properties compared to their first-order counterparts e.g. Adam and SGD. However, their practicality in training DNNs are still limited due to increased per-iteration computations and suboptimal accuracy compared to the first order methods. We present AdaFisher--an adaptive second-order optimizer that leverages a block-diagonal approximation to the Fisher information matrix for adaptive gradient preconditioning. AdaFisher aims to bridge the gap between enhanced convergence capabilities and computational efficiency in second-order optimization framework for training DNNs. Despite the slow pace of second-order optimizers, we showcase that AdaFisher can be reliably adopted for image classification, language modelling and stand out for its stability and robustness in hyperparameter tuning. We demonstrate that AdaFisher outperforms the SOTA optimizers in terms of both accuracy and convergence speed._ 
 
 <center>
+<a href="https://openreview.net/forum?id=puTxuiK2qO&noteId=EljVWMabSb" target="_blank">
+    <img alt="OpenReview" src="https://img.shields.io/badge/OpenReview-AdaFisher-blue?logo=openreview" height="30" />
+</a>
 <a href="https://arxiv.org/abs/2405.16397" target="_blank">
     <img alt="arXiv" src="https://img.shields.io/badge/arXiv-AdaFisher-red?logo=arxiv" height="30" />
 <div>

@@ -1,10 +1,11 @@
-from typing import Any, List
+from typing import Any, Tuple
 from optimizers.Adam import Adam
 from optimizers.AdamW import AdamW
 from optimizers.AdaHessian import Adahessian
 from optimizers.AdaFisher import AdaFisher, AdaFisherW
 from optimizers.sgd import SGD
-from optimizers.lr_scheduler import StepLR, CosineAnnealingWarmRestarts, CosineAnnealingLR, OneCycleLR, MultiStepLR, LinearLR
+from optimizers.lr_scheduler import (StepLR, CosineAnnealingWarmRestarts, CosineAnnealingLR, OneCycleLR, MultiStepLR,
+                                     LinearLR)
 import torch
 
 
@@ -13,12 +14,10 @@ def get_optimizer_scheduler(
         lr_scheduler: str,
         init_lr: float,
         net: Any,
-        listed_params: List[Any],
         train_loader_len: int,
-        mini_batch_size: int,
         max_epochs: int,
         optimizer_kwargs=dict(),
-        scheduler_kwargs=dict()) -> torch.nn.Module:
+        scheduler_kwargs=dict()) -> Tuple[torch.optim.Optimizer, Any]:
     optimizer = None
     scheduler = None
     optim_processed_kwargs = {
@@ -49,12 +48,6 @@ def get_optimizer_scheduler(
     elif optim_method == 'AdaHessian':
         optimizer = Adahessian(net.parameters(), lr=init_lr,
                             **optim_processed_kwargs)
-    elif optim_method == 'Apollo':
-        optimizer = Apollo(net.parameters(), lr=init_lr,
-                             **optim_processed_kwargs)
-    elif optim_method == 'SAM':
-        optimizer = SAM(net.parameters(), SGD, lr=init_lr,
-                           **optim_processed_kwargs)
     elif optim_method in ['Shampoo', 'kfac']:
         optimizer = SGD(
             net.parameters(),

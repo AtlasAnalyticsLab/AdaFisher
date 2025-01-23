@@ -232,4 +232,7 @@ def get_data(
         test_loader = torch.utils.data.DataLoader(
             testset, batch_size=mini_batch_size, shuffle=False,
             num_workers=num_workers, pin_memory=True)
+    else:
+        raise ValueError(f'Unsupported dataset: {name}')
+
     return train_loader, test_loader, num_classes

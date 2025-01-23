@@ -21,3 +21,5 @@ swin_s
 swin_b
 swin_l
 cct
+focalnet
+mobilenetv3

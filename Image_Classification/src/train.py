@@ -222,9 +222,7 @@ class TrainingAgent:
             lr_scheduler=self.config['scheduler'],
             init_lr=learning_rate,
             net=self.network,
-            listed_params=list(self.network.parameters()),
             train_loader_len=len(self.train_loader),
-            mini_batch_size=self.config['mini_batch_size'],
             max_epochs=self.config['max_epochs'],
             optimizer_kwargs=self.config['optimizer_kwargs'],
             scheduler_kwargs=self.config['scheduler_kwargs'])

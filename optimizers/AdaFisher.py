@@ -54,8 +54,8 @@ def update_running_avg(new: Tensor, current: Tensor, gamma: float):
         current: Current parameter values to update
         gamma: Smoothing coefficient (0-1)
     """
-    current *= gamma
-    current += (gamma * 1e-1) * new
+    current *= gamma * 1e-1
+    current += (gamma * 1e-2) * new
 
 
 def _extract_patches(x: Tensor, kernel_size: Tuple[int],
@@ -89,13 +89,13 @@ def _extract_patches(x: Tensor, kernel_size: Tuple[int],
     return x
 
 
-class Compute_H_bar_D:
+class Compute_H_D:
     """
     Computes diagonal elements of activation covariance matrices for different neural network layers.
     """
 
     @classmethod
-    def compute_H_bar_D(cls, h, layer) -> Tensor:
+    def compute_H_D(cls, h, layer) -> Tensor:
         """
         Computes diagonal of activation covariance matrix.
 
@@ -121,17 +121,17 @@ class Compute_H_bar_D:
             Covariance matrix diagonal
         """
         if isinstance(layer, Linear):
-            H_bar_D = cls.linear(h, layer)
+            H_D = cls.linear(h, layer)
         elif isinstance(layer, Conv2d):
-            H_bar_D = cls.conv2d(h, layer)
+            H_D = cls.conv2d(h, layer)
         elif isinstance(layer, BatchNorm2d):
-            H_bar_D = cls.batchnorm2d(h, layer)
+            H_D = cls.batchnorm2d(h, layer)
         elif isinstance(layer, LayerNorm):
-            H_bar_D = cls.layernorm(h, layer)
+            H_D = cls.layernorm(h, layer)
         else:
             raise NotImplementedError
 
-        return H_bar_D
+        return H_D
 
     @staticmethod
     def conv2d(h: Tensor, layer: Conv2d) -> Tensor:
@@ -188,7 +188,7 @@ class Compute_H_bar_D:
         """
         batch_size, spatial_size = h.size(0), h.size(2) * h.size(3)
         sum_h = sum(h, dim=(0, 2, 3)).unsqueeze(1) / (spatial_size ** 2)
-        h_bar = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1)
+        h_bar = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1) # 1st column for H of beta parameter
         return einsum('ij,ij->j', h_bar, h_bar) / (batch_size ** 2)
 
     @staticmethod
@@ -203,10 +203,10 @@ class Compute_H_bar_D:
         Returns:
             Covariance diagonal
         """
-        dim_to_reduce = [d for d in range(h.ndim) if d != 1]
+        dim_to_reduce = [d for d in range(h.ndim) if d != 1] # T in the paper
         batch_size, dim_norm = h.shape[0], prod([h.shape[dim] for dim in dim_to_reduce if dim != 0])
         sum_h = sum(h, dim=dim_to_reduce).unsqueeze(1) / (dim_norm ** 2)
-        h_bar = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1)
+        h_bar = cat([sum_h, sum_h.new(sum_h.size(0), 1).fill_(1)], 1) # 1st column for H of beta parameter
         return einsum('ij,ij->j', h_bar, h_bar) / (batch_size ** 2)
 
 
@@ -360,7 +360,7 @@ class AdaFisherBackBone(Optimizer):
                  lr: float = 1e-3,
                  beta: float = 0.9,
                  Lambda: float = 1e-3,
-                 gamma: float = 0.08,
+                 gamma: float = 0.8,
                  TCov: int = 100,
                  weight_decay: float = 0,
                  dist: bool = False
@@ -384,11 +384,11 @@ class AdaFisherBackBone(Optimizer):
         self.steps = 0
 
         # store vectors for the pre-conditioner
-        self.H_bar_D: Dict[Module, Tensor] = {}
+        self.H_D: Dict[Module, Tensor] = {}
         self.S_D: Dict[Module, Tensor] = {}
         # save the layers of the network where FIM can be computed
         self.modules: List[Module] = []
-        self.Compute_H_bar_D = Compute_H_bar_D()
+        self.Compute_H_D = Compute_H_D()
         self.Compute_S_D = Compute_S_D()
         self._prepare_model()
         super(AdaFisherBackBone, self).__init__(model.parameters(), defaults)
@@ -406,10 +406,10 @@ class AdaFisherBackBone(Optimizer):
             Attaches as forward hook to track layer activations for AdaFisher optimization.
         """
         if is_grad_enabled() and self.steps % self.TCov == 0:
-            H_bar_D_i = self.Compute_H_bar_D(input[0].data, module)
+            H_D_i = self.Compute_H_D(input[0].data, module)
             if self.steps == 0:
-                self.H_bar_D[module] = H_bar_D_i.new(H_bar_D_i.size(0)).fill_(1)
-            update_running_avg(MinMaxNormalization(H_bar_D_i), self.H_bar_D[module], self.gamma)
+                self.H_D[module] = H_D_i.new(H_D_i.size(0)).fill_(1)
+            update_running_avg(MinMaxNormalization(H_D_i), self.H_D[module], self.gamma)
             
 
     def _save_grad_output(self, module: Module, grad_input: Tensor, grad_output: Tensor):
@@ -444,23 +444,54 @@ class AdaFisherBackBone(Optimizer):
                 self.modules.append(module)
                 module.register_forward_hook(self._save_input)
                 module.register_full_backward_hook(self._save_grad_output)
+                
+    def state_dict(self) -> Dict[str:List[Tensor]]:
+        """Save the Kronecker factors in the dictionary state of the optimizer
+
+        Returns:
+            Dict[str:List[Tensor]]: Dictionnary containing the states of the optimizer 
+        """
+        state_dict = super().state_dict()
+        # Save H_D and S_D as lists ordered by self.modules
+        state_dict['H_D'] = [self.H_D[module] for module in self.modules]
+        state_dict['S_D'] = [self.S_D[module] for module in self.modules]
+        state_dict['steps'] = self.steps
+        return state_dict
+
+    def load_state_dict(self, state_dict:Dict[str:List[Tensor]]):
+        """Load the Kronecker factors from the dictionary state of the optimizer
+
+        Args:
+            state_dict (Dict[str:List[Tensor]]): Dictionnary containing the states of the optimizer 
+        """
+        H_D_list = state_dict.pop('H_D', [])
+        S_D_list = state_dict.pop('S_D', [])
+        self.steps = state_dict.pop('steps', 0)
+        # Load standard parameter states
+        super().load_state_dict(state_dict)
+        # Rebuild H_D and S_D dictionaries
+        self.H_D = {}
+        self.S_D = {}
+        for module, h_bar, s in zip(self.modules, H_D_list, S_D_list):
+            self.H_D[module] = h_bar
+            self.S_D[module] = s
     
     def aggregate_kronecker_factors(self, module: Module):
         """
         Aggregates Kronecker factors across multiple GPUs in a distributed setting.
 
         This function performs an all-reduce operation to sum the Kronecker factors 
-        `H_bar_D` and `S_D` across all GPUs involved in the training. It then averages 
+        `H_D` and `S_D` across all GPUs involved in the training. It then averages 
         these factors by dividing the summed values by the total number of GPUs (`world_size`).
 
         Args:
             module (Module): The neural network module for which the Kronecker factors 
-                            `H_bar_D` and `S_D` are being aggregated.
+                            `H_D` and `S_D` are being aggregated.
         """
-        dist.all_reduce(self.H_bar_D[module], op=dist.ReduceOp.SUM)
+        dist.all_reduce(self.H_D[module], op=dist.ReduceOp.SUM)
         dist.all_reduce(self.S_D[module], op=dist.ReduceOp.SUM)
 
-        self.H_bar_D[module] /= dist.get_world_size()
+        self.H_D[module] /= dist.get_world_size()
         self.S_D[module] /= dist.get_world_size()
 
     def _get_F_tilde(self, module: Module):
@@ -480,7 +511,7 @@ class AdaFisherBackBone(Optimizer):
         # Fisher Computation
         if self.dist:
             self.aggregate_kronecker_factors(module = module)
-        F_tilde = kron(self.H_bar_D[module].unsqueeze(1), self.S_D[module].unsqueeze(0)).t() + self.Lambda
+        F_tilde = kron(self.H_D[module].unsqueeze(1), self.S_D[module].unsqueeze(0)).t() + self.Lambda
         if module.bias is not None:
             F_tilde = [F_tilde[:, :-1], F_tilde[:, -1:]]
             F_tilde[0] = F_tilde[0].view(*module.weight.grad.data.size())
@@ -548,7 +579,7 @@ class AdaFisher(AdaFisherBackBone):
                  lr: float = 1e-3,
                  beta: float = 0.9,
                  Lambda: float = 1e-3,
-                 gamma: float = 0.08,
+                 gamma: float = 0.8,
                  TCov: int = 100,
                  weight_decay: float = 0,
                  dist: bool = False
@@ -587,12 +618,12 @@ class AdaFisher(AdaFisherBackBone):
         exp_avg = state['exp_avg']
         beta = hyperparameters['beta']
         state['step'] += 1
-        bias_correction1 = 1 - beta ** state['step']
+        bias_correction = 1 - beta ** state['step']
         if hyperparameters['weight_decay'] != 0:
             grad = grad.add(param, alpha=hyperparameters['weight_decay'])
         # Decay the first and second moment running average coefficient
-        exp_avg.mul_(beta).add_(grad, alpha=1 - beta)
-        step_size = hyperparameters['lr'] / bias_correction1
+        exp_avg.mul_(beta).add_(grad, alpha= 1 - beta)
+        step_size = hyperparameters['lr'] / bias_correction
         # Update Rule
         param.addcdiv_(exp_avg, F_tilde, value=-step_size)
 
@@ -689,7 +720,7 @@ class AdaFisherW(AdaFisherBackBone):
                  lr: float = 1e-3,
                  beta: float = 0.9,
                  Lambda: float = 1e-3,
-                 gamma: float = 0.08,
+                 gamma: float = 0.8,
                  TCov: int = 100,
                  weight_decay: float = 0,
                  dist: bool = False
@@ -726,12 +757,12 @@ class AdaFisherW(AdaFisherBackBone):
             state['exp_avg'] = zeros_like(
                 param, memory_format=preserve_format)
         exp_avg = state['exp_avg']
-        beta1 = hyperparameters['beta']
+        beta = hyperparameters['beta']
         state['step'] += 1
-        bias_correction1 = 1 - beta1 ** state['step']
+        bias_correction = 1 - beta ** state['step']
         # Decay the first and second moment running average coefficient
-        exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-        param.data -= hyperparameters['lr'] * (exp_avg / bias_correction1 / F_tilde + hyperparameters['weight_decay'] * param.data)
+        exp_avg.mul_(beta).add_(grad, alpha= 1 - beta)
+        param.data -= hyperparameters['lr'] * (exp_avg / bias_correction / F_tilde + hyperparameters['weight_decay'] * param.data)
 
 
     @no_grad()

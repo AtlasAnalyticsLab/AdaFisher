@@ -445,7 +445,7 @@ class AdaFisherBackBone(Optimizer):
                 module.register_forward_hook(self._save_input)
                 module.register_full_backward_hook(self._save_grad_output)
                 
-    def state_dict(self) -> Dict[str:List[Tensor]]:
+    def state_dict(self):
         """Save the Kronecker factors in the dictionary state of the optimizer
 
         Returns:
@@ -458,7 +458,7 @@ class AdaFisherBackBone(Optimizer):
         state_dict['steps'] = self.steps
         return state_dict
 
-    def load_state_dict(self, state_dict:Dict[str:List[Tensor]]):
+    def load_state_dict(self, state_dict):
         """Load the Kronecker factors from the dictionary state of the optimizer
 
         Args:

@@ -165,12 +165,12 @@ This project is licensed under the [GNU General Public License v3.0](https://www
 If you find this repository useful, please consider giving a star ⭐ and citing our work 📝:)
 
 ```bibtex
-@misc{gomes2024adafisher,
-      title={AdaFisher: Adaptive Second Order Optimization via Fisher Information}, 
-      author={Damien Martins Gomes and Yanlei Zhang and Eugene Belilovsky and Guy Wolf and Mahdi S. Hosseini},
-      year={2024},
-      eprint={2405.16397},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG}
+@inproceedings{
+gomes2025adafisher,
+title={AdaFisher: Adaptive Second Order Optimization via Fisher Information},
+author={Damien MARTINS GOMES and Yanlei Zhang and Eugene Belilovsky and Guy Wolf and Mahdi S. Hosseini},
+booktitle={The Thirteenth International Conference on Learning Representations},
+year={2025},
+url={https://openreview.net/forum?id=puTxuiK2qO}
 }
 ```
